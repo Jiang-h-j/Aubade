@@ -104,13 +104,13 @@ flowchart TD
 
 状态取值：`todo`（未开始）/ `in_progress`（进行中）/ `done`（已完成）/ `blocked`（被阻塞）。
 
-当前整体状态：**DAG 待用户评审**；用户通过后从 **N00** 开始。
+当前整体状态：**开发中**；N00 已完成，下一个可开发节点 **N01 手动记账 + 账单列表/编辑**（第一个可自用版本，依赖 N00 已满足）。
 
 ## 节点追踪表
 
 | Node ID | 名称 | 状态 | 依赖 | 对应技术基线模块 | 可自用里程碑 |
 |---|---|---|---|---|---|
-| N00 | 工程地基 + 数据层 | todo | — | M1 | — |
+| N00 | 工程地基 + 数据层 | done | — | M1 | — |
 | N01 | 手动记账 + 账单列表/编辑 | todo | N00 | M2.1 + M3 | ✅ 第一个可自用版本 |
 | N02 | 剩余金额 + 统计 | todo | N01 | M5 + M6 | ✅ 能看花销与结余 |
 | N03 | DeepSeek 解析 + 文本识别 | todo | N00, N01 | M4 + M2.2 | ✅ 粘贴短信一键记账 |
@@ -125,12 +125,12 @@ flowchart TD
 
 - **Node ID**：N00
 - **名称**：工程地基 + 数据层
-- **状态**：todo
+- **状态**：done
 - **依赖**：无
 - **前端范围**：无用户可见行为（纯地基）。
 - **PRD 路径**：`docs/prd/nodes/n00-foundation-data-prd.md`
 - **TRD 入口路径**：`docs/design/nodes/n00-foundation-data/00-index.md`
-- **范围**：创建 Xcode 工程（iOS 17+，SwiftUI 生命周期）；定义 SwiftData 四个模型 `Transaction`/`Category`/`Budget`/`BalanceBaseline`（字段见技术基线 §8，金额用 `Decimal`）；`ModelContainer` 初始化；首次启动装载预置分类（衣/食/住/行/玩/其他 + 工作/其他收入）；基础读写封装。
+- **范围**：创建 Xcode 工程（iOS 17+，SwiftUI 生命周期）；定义 SwiftData 四个模型 `Transaction`/`Category`/`Budget`/`BalanceBaseline`（字段见技术基线 §8，金额用 `Decimal`；分类模型代码类型名落地为 `LedgerCategory`，避开与 ObjC runtime `Category` 冲突，语义不变）；`ModelContainer` 初始化；首次启动装载预置分类（衣/食/住/行/玩/其他 + 工作/其他收入）；基础读写封装。
 - **关键约束**：金额一律 `Decimal`；**App Group 路线判定尽量在本节点前移**——若倾向截图后台走"独立扩展进程"，建库时就应按 App Group 共享容器建，避免后期存储迁移返工（见技术基线 §11 第 1 条）。
 - **退出标准（可观察）**：工程能在 iOS 17+ 目标上编译运行；首次启动后预置分类已写入并可查询到；四个模型可增删改查（可用一个临时调试入口或单元测试验证）。
 - **下一次恢复入口**：`docs/design/nodes/n00-foundation-data/99-slice-progress.md`

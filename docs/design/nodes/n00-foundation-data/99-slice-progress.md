@@ -1,44 +1,41 @@
-# N00 工程地基 + 数据层 · 切片进度
+# TRD 切片进度
 
-> 恢复入口：本文件 + `00-index.md` + `01-foundation-data-trd.md` + 节点 PRD + DAG。
+- 最近完成 TRD：`docs/design/nodes/n00-foundation-data/01-foundation-data-trd.md`
+- 下一个 TRD：`全部完成`
+- 更新时间：2026-07-13T15:12:49+08:00
 
-## 切片状态
+## 上一次 TRD 开发
 
-| 序号 | 切片 | 状态 | 说明 |
-|---|---|---|---|
-| 01 | 工程骨架 + SwiftData 数据层最小闭环 | 待开发（TRD 已出，待自评审 + 用户 TRD 评审） | 单切片；覆盖 PRD 全部 6 项范围 + 8 条验收 |
+N00 切片 01「工程骨架 + SwiftData 数据层最小闭环」全部落地并验证通过：手工构造可编译运行的 Xcode 工程（iOS 17+、SwiftUI、零三方依赖）、四个 @Model（Transaction / LedgerCategory / Budget / BalanceBaseline，金额全 Decimal）、三个 Codable 枚举、单一 ModelContainer 封装点（PersistenceController）、8 条预置分类首次幂等装载、薄 CRUD 封装（LedgerStore）、DEBUG-only 调试入口，以及覆盖 PRD 验收 2/3/4/5 的 10 个单元测试。
 
-## 关键决策与边界（须随节点长期保留）
+开发中定位并修复两个真实缺陷（已入关键决策 7/8）：
+- 模型名 Category 与 ObjC runtime `typedef ... *Category` 冲突 → 全局改名 LedgerCategory（用户拍板）。
+- SwiftData 悬垂 context：`makeInMemoryContainer().mainContext` 链式取用致容器被释放、insert/save 时 SIGTRAP → 测试改为持有容器。
 
-1. **App Group 路线（PRD 评审已定）**：截图后台走 **in-app App Intents** → 本片**不配置 App Group**，`ModelContainer` 用默认（非共享）配置。对应验收 8 的可审阅证据 = 无 App Group entitlement + `ModelConfiguration` 未传 `groupContainer`。
-2. **迁移对冲的边界**：容器创建收敛到 `PersistenceController.makeContainer()` 单点，日后改独立扩展进程只改这一处**代码**；但**已积累数据的目录搬迁不在对冲范围内**，若 N06 真机验证被迫切换，需在 N06 单独评估搬迁逻辑。ViewModel/Store 只持注入的 `ModelContext`、永不自建容器（保留余地的硬约束）。
-3. **`source` 枚举归一**：技术基线 §8 写作 `sms/text`，含斜杠不合法作 Swift case / 稳定 RawValue，落地为 `text`（语义等价：短信/任意文本入口）。此为唯一措辞→标识符归一，非静默改动。
-4. **预置装载幂等判据**：`fetchCount(isPreset==true) == 0` 才装载，而非"计数是否为 8"——避免用户日后删除某预置分类后重启被补回（分类可增删改是 §8/N07 语义）。验收 4「再启动仍 8 条」在未经用户改动前提下成立。
-5. **剩余金额不建字段**：`BalanceBaseline` 只存 `initialAmount` + `establishedAt`，剩余是派生值（§8），派生计算在 N02。
-6. **删除规则**：`Category` 对 `Transaction` 用 `.nullify`（删分类不删账单，账单是用户资产）。
+## 涉及文件和符号
 
-## 下游契约（对 N01~N06 承诺，须稳定）
+新增源码（Aubade/）：AubadeApp.swift、ContentView.swift、Models/{Enums,Transaction,LedgerCategory,Budget,BalanceBaseline}.swift、Persistence/{PersistenceController,PresetCategories}.swift、Store/LedgerStore.swift、Debug/DebugMenuView.swift。
+新增测试（AubadeTests/）：ModelCRUDTests、DecimalPrecisionTests、PresetCategoryTests、RelationshipTests。
+工程文件：Aubade.xcodeproj/project.pbxproj（手工构造，objectVersion 77 file-system-synchronized groups）+ 共享 scheme Aubade.xcscheme。
+关键符号：PersistenceController.makeContainer/makeInMemoryContainer、PresetCategories.seedIfNeeded、LedgerStore（createCategory/createTransaction/updateTransaction/presetCategories/fetch/delete）。
 
-- 四模型字段与技术基线 §8 一致、金额 `Decimal`。
-- 单一可共享 `ModelContainer`（in-app 后台链路可直接复用）。
-- 首启后 8 条预置分类可查询。
-- 读写经注入的 `ModelContext` / `LedgerStore`。
+## 验证情况
 
-## 自评审记录
+- 编译：`xcodebuild -scheme Aubade -destination 'generic/platform=iOS Simulator' build` → BUILD SUCCEEDED（验证点 1）。
+- 单测：`xcodebuild test`（iPhone 17 Pro / iOS 26.5 模拟器）→ 10/10 passed，TEST SUCCEEDED（验证点 2/3/4/5）。
+- 审阅类验证点 6/7/8/9：容器单点（全仓仅 PersistenceController 两处构造 ModelContainer）、非实体状态未入库（四模型无 Key/通知/阈值/周期规则）、无 App Group（0 个 .entitlements、无 groupContainer）、sms/text→text 归一有注释——全部通过。
+- jflow-review 代码自评审：PASS（1 轮 / max 3）。两个只读子 agent（上游一致性+范围、SwiftData 技术正确性+健壮性）均无阻断项；确认两个坑修复彻底、产品代码无同类悬垂隐患。已采纳非阻断建议 1（改名决策补登 slice-progress 关键决策 7/8）；其余非阻断建议（PersistenceController enum vs struct、seed 静默吞错、updatedAt 断言偏弱、手建分类默认 sortOrder）不改，理由见评审。
 
-**结论：PASS（1 轮，max 3）**。两个只读子 agent 并行评审：
+## 遗留风险和注意事项
 
-- **上游一致性**：四模型逐字段对齐技术基线 §8 无编造/遗漏；金额三处 Decimal；枚举取值正确（`sms/text→text` 归一可追溯）；预置 8 条 isPreset+sortOrder；剩余金额正确地不建字段；非实体状态未入库；App Group in-app 路线 + 迁移对冲边界如实无夸大；未越界 N01~N07；9 条验证点覆盖 PRD 8 条验收 + DAG 退出标准且可客观观察。无阻断项。
-- **技术可实现性**：`@Model`/`@Attribute(.unique)`/`Decimal`/`Codable` 枚举/单端 `inverse`+`.nullify`/`Schema`/`ModelConfiguration`/`ModelContainer(for:configurations:)`/`mainContext`/`#Predicate`/`fetchCount`/`insert`/`save` 均为 iOS 17 SwiftData 真实且正确用法（与 Xcode 默认模板一致）；关系语义、幂等判据、`.task` 时机在单用户主线程下无缺陷；4 个内存容器单测可跑通并证明验收；分层克制未过度设计。无阻断项。
+- 工程文件手工构造（本机无 xcodegen/tuist）：已被 xcodebuild 成功解析+编译+测试，但日后用 Xcode GUI 增删文件仍走 file-system-synchronized groups 自动纳入，新增 target 或 build setting 需谨慎手改 pbxproj。
+- 环境依赖：本机 Xcode 26.6 + iOS 26.5 模拟器 runtime 已装；换机需重新 `xcodebuild -downloadPlatform iOS`。
+- N01~N07 引用分类模型一律用 `LedgerCategory`（非 Category）；任何 SwiftData 代码禁止链式 `container().mainContext`，须先持有容器。
+- Bundle ID 占位 com.aubade.app，真机自签名时按开发者账号调整（不影响本片验收）。
 
-**已采纳的非阻断修订**（5 条）：
+## 下一次开发
 
-1. 验收 3 去掉恒真的 `amount is Decimal` 类型断言（避免编译器 always-true 告警），只留值相等。
-2. 验收 5 补明"删分类需 `context.save()`（必要时重新 fetch）才稳定观察到 `category==nil`"。
-3. 验收 1 的 `xcodebuild` destination 改用 `generic/platform=iOS Simulator`，不依赖本机具体模拟器名/版本。
-4. 验收 4 措辞对齐 PRD"再次启动仍 8 条"，点明"未经用户删改前提"。
-5. `Category.transactions` 反向关系处加锚定说明（§8 单向关系的 SwiftData 反向端，非新增业务字段）。
+全部 TRD 已完成。下一次若继续，请从 PRD 验收标准和最终验证情况开始检查。
 
-## 用户评审记录
-
-- 2026-07-13：用户明确「TRD 评审通过」。TRD 产物入库并推送，N00 进入开发（jflow-dev），首个切片 01 工程骨架 + SwiftData 数据层最小闭环。
+补充说明：
+N00 只有这一个切片，完成即节点闭环。下一步：complete-trd 推进状态 → git 提交（type[scope]: 规范）→ 更新 DAG 标记 N00 完成 → 按 DAG 找下一个可开发节点，将 next_action 指向生成该节点 PRD（进入普通 Jflow 节点 PRD/TRD/dev）。恢复文件：`.claude/jflow/current.json`、`docs/design/aubade-v1-dev-dag.md`、本节点 `99-slice-progress.md`。
