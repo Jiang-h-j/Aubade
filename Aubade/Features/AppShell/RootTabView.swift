@@ -16,7 +16,7 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            RecordTabPlaceholder()
+            RecordTabView(selection: $selectedTab)
                 .tag(AppTab.record)
                 .tabItem { Label("记账", systemImage: "pencil") }
 
@@ -35,15 +35,7 @@ struct RootTabView: View {
     }
 }
 
-// MARK: - 临时占位（切片 02/03 替换为真实视图）
-
-/// TODO(N01-02) 替换为记账 Tab 真实视图（今日已记 / 四入口 / 最近记录）。
-private struct RecordTabPlaceholder: View {
-    var body: some View {
-        ContentUnavailableView("记账", systemImage: "pencil",
-                               description: Text("手动记账即将上线"))
-    }
-}
+// MARK: - 临时占位（切片 03 替换为真实视图）
 
 /// TODO(N01-03) 替换为账单 Tab 真实视图（流水列表 / 筛选 / 编辑删除）。
 private struct LedgerTabPlaceholder: View {
