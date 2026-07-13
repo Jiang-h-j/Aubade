@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aubade 原型 Demo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="phone-wrap">
+    <div class="phone">
+      <!-- 状态栏 -->
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="sb-right">Aubade · 原型</span>
+      </div>
+
+      <!-- 屏幕容器：各页面挂载于此 -->
+      <div id="screen" class="screen"></div>
+
+      <!-- 底部 TabBar -->
+      <nav id="tabbar" class="tabbar">
+        <button class="tab" data-tab="add">
+          <span class="tab-ico">✎</span><span>记账</span>
+        </button>
+        <button class="tab" data-tab="bills">
+          <span class="tab-ico">☰</span><span>账单</span>
+        </button>
+        <button class="tab" data-tab="stats">
+          <span class="tab-ico">▤</span><span>统计</span>
+        </button>
+        <button class="tab" data-tab="mine">
+          <span class="tab-ico">◔</span><span>我的</span>
+        </button>
+      </nav>
+
+      <!-- 弹层容器：结果卡片 / 确认弹窗 / Toast（挂在手机内，相对手机屏幕定位并被裁剪） -->
+      <div id="modal-root"></div>
+      <div id="toast-root"></div>
+    </div>
+
+    <!-- 演示控制区（原型辅助，非 App 内容） -->
+    <div class="devtools">
+      <div class="devtools-title">原型演示控制台（非 App 内容）</div>
+      <div class="devtools-row">
+        <button id="btn-reset">重置数据</button>
+        <button id="btn-shortcut">📷 模拟快捷指令截图</button>
+        <label><input type="checkbox" id="chk-fail"> 模拟识别失败</label>
+        <label><input type="checkbox" id="chk-nokey"> 模拟未配置 Key</label>
+      </div>
+      <div class="devtools-hint">「模拟快捷指令截图」= 假装你在付款页触发了快捷指令，看后台入账+顶部通知；勾选异常项后再触发可体验失败/未配 Key。重置会清空数据并回到首次引导。</div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
