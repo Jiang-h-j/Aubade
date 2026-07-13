@@ -1,41 +1,11 @@
 import SwiftUI
 
-/// 占位根视图。本片不实现任何用户可见记账/统计界面（→ N01/N02）。
-/// DEBUG 构建下额外挂载临时调试入口，用于肉眼确认容器单点共享；Release 不含此入口。
+/// App 根视图。切片 01 起从 N00 占位页换为底部四 Tab 主框架 `RootTabView`。
+/// 保留 `ContentView` 名以免改动 `AubadeApp` 的引用点（容器注入与预置分类装载不变）。
+/// 原 DEBUG 调试入口已迁入 `ProfilePlaceholderView`（我的 Tab）。
 struct ContentView: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sunrise.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
-            Text("Aubade")
-                .font(.largeTitle.bold())
-            Text("数据层已就绪")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            #if DEBUG
-            NavigationLink {
-                DebugMenuView()
-            } label: {
-                Label("调试菜单", systemImage: "hammer.fill")
-            }
-            .padding(.top, 24)
-            #endif
-        }
-        .padding()
-        .modifier(DebugNavigationWrapper())
-    }
-}
-
-/// DEBUG 下用 NavigationStack 包裹以支持 NavigationLink；Release 下透传，避免多余容器。
-private struct DebugNavigationWrapper: ViewModifier {
-    func body(content: Content) -> some View {
-        #if DEBUG
-        NavigationStack { content }
-        #else
-        content
-        #endif
+        RootTabView()
     }
 }
 
