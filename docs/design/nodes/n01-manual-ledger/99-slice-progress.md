@@ -1,52 +1,51 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/n01-manual-ledger/02-editor-manual-entry-trd.md`
-- 下一个 TRD：`docs/design/nodes/n01-manual-ledger/03-ledger-list-filter-trd.md`
-- 更新时间：2026-07-13T21:56:39+08:00
+- 最近完成 TRD：`docs/design/nodes/n01-manual-ledger/03-ledger-list-filter-trd.md`
+- 下一个 TRD：`全部完成`
+- 更新时间：2026-07-13T23:40:59+08:00
 
 ## 上一次 TRD 开发
 
-N01 切片 02：打通"手动记一笔"完整闭环。新增可复用账单编辑组件 `TransactionEditor`（create 新建 / edit 既有双模式，字段集对齐原型 §4.3，为 N03~N06 识别结果卡片预留复用点）；手动记账入口 `ManualEntryView`（create 模式 + createTransaction 落库，商户恒 nil）；记账 Tab 真实视图 `RecordTabView` 替换切片 01 的 `RecordTabPlaceholder`（今日已记 chip、四入口网格仅手动可用余三占位提示、最近 4 笔 occurredAt 倒序、点击进 edit sheet 即接 updateTransaction 落库、「全部 ›」跳账单 Tab、空态占位）。编辑落库经共享 `EditorActions` 收敛为单一来源，供切片 03 列表进编辑复用。
+N01 切片 03：闭合账单 Tab「看流水 → 筛 → 改 → 删」全闭环，N01 手动记账可自用版完成。账单 Tab 真实视图 `LedgerTabView` 替换切片 01 的 `LedgerTabPlaceholder`：`@Query` 全量 + 内存过滤/分组（TRD §1 决策）；顶部筛选栏（分类 × 时间范围，可叠加）；按自然日分组倒序、组内 occurredAt 倒序的流水列表，每行分类彩标 + 商户/备注摘要 + 方向金额；点行经 `.sheet` 进编辑页（复用切片 02 `TransactionEditor(.edit)` + `EditorActions.makeUpdate` 落库）；列表侧滑删除 + 编辑页「删除这笔」双入口均二次确认（`confirmationDialog`）；空账本引导去记账、筛选无结果两态分离。筛选核心（半开区间边界、分类过滤、双条件叠加、分组倒序）抽为无状态纯函数 `LedgerFilter`，边界可单测。不含汇总卡（验收 10，→ N02）。
+
+**呈现方式修正**：TRD §66 原写「push」，实现时改为 `.sheet`——切片 02 的 `TransactionEditor` 自带 `NavigationStack`（为 sheet 设计），push 会嵌套导航栈致双导航栏；已同步更新 TRD 记录此决策（用户确认）。
 
 ## 涉及文件和符号
 
 新增：
-- `Aubade/Features/Editor/TransactionDraft.swift`：纯值表单模型。`init(direction:occurredAt:)` 空草稿 / `init(from tx:)` 编辑回填；`parsedAmount`（`Decimal(string:)` trim 后解析，空/非数字→nil）、`isValid`（解析成功且 >0）、`normalizedMerchant/normalizedNote`（去空白空→nil）。
-- `Aubade/Features/Editor/TransactionEditor.swift`：`EditorMode`（`.create(direction:)`/`.edit(Transaction)`）+ 双模式 Form 视图。方向过滤分类按 sortOrder、切方向清空不符分类；`DatePicker(in: ...Date())` 禁未来；create 隐藏商户行、edit 显示；`onSave` 注入落库、`onDelete?` 占位钩子（本片不传）、`rawText` 预留不渲染；`isValid==false` 禁用保存。
-- `Aubade/Features/Editor/EditorActions.swift`：`makeUpdate(store:tx:)` 产出 edit 的 onSave（updateTransaction 回写 draft 全字段）、`makeDelete(store:tx:)` 产出 delete 闭包（切片 03 套二次确认）。
-- `Aubade/Features/Shared/AmountFormat.swift`：`signedString(_:direction:)`（NSDecimalNumber 喂 NumberFormatter 保精度，支出 `-`/收入 `+` 千分位 2 位小数）、`plainString`、`color(for:)`（收入绿/支出 .primary）。
-- `Aubade/Features/Record/ManualEntryView.swift`：`@Query` 全部分类，包 `TransactionEditor(.create(.expense))`，onSave 走 `LedgerStore(modelContext).createTransaction(... source:.manual, merchant:nil)`。
-- `Aubade/Features/Record/RecordTabView.swift`：`@Binding selection: AppTab` 跨 Tab；`todayCount`（allTransactions 内存过滤 isDateInToday createdAt）；`EntryButton` 四入口、`RecentTransactionRow`（CategoryStyle emoji+主 API 取色、AmountFormat 金额）；edit sheet 经 `EditorActions.makeUpdate`。
-- `AubadeTests/TransactionDraftTests.swift`（13 例）、`AubadeTests/AmountFormatTests.swift`（7 例）。
+- `Aubade/Features/Ledger/LedgerFilter.swift`：`CategoryFilter`（.all/.some，Equatable+Hashable **基于 LedgerCategory.id** 而非引用，防 @Query 刷新后 Picker selection 丢失）、`DateRangeFilter`（.all/.thisWeek/.thisMonth/.custom，`contains(_:now:calendar:)` 注入 now/calendar 以便单测钉死边界，统一半开区间 `[start,end)` 不用 `DateInterval.contains`）、`LedgerFilter.apply`（分类×时间叠加）/`groupByDay`（日期倒序+组内倒序）、`DayGroup`（Identifiable，day 作 id）。
+- `Aubade/Features/Ledger/LedgerRowView.swift`：单行；取色走**主 API** `CategoryStyle.color(name:direction:)`（nil 分类走方向兜底，遵循切片 02 handoff 规范）、`AmountFormat.signedString` 方向金额。
+- `Aubade/Features/Ledger/TransactionDetailView.swift`：编辑页容器，包 `TransactionEditor(.edit)` + `makeUpdate` onSave + onDelete 触发 `confirmationDialog` 二次确认。删除顺序**先 dismiss 再 delete**（局部常量捕获闭包），消除 save 触发 @Query 刷新时 sheet 以已删 tx 重建 editor 的时序窗口（SwiftData 已删对象敏感）。
+- `Aubade/Features/Ledger/LedgerTabView.swift`：账单主视图，自带 `NavigationStack`；筛选栏（分类/时间 Menu + 自定义 DatePicker `in: ...Date()` 禁未来、止不早于起）；分组 `List`/`Section`（组头 `M月d日`）；侧滑删除 `pendingDelete` + `confirmationDialog`；编辑/自定义双 `.sheet`；空账本/筛选无结果两态。
+- `AubadeTests/LedgerFilterTests.swift`（12 例）：固定 UTC+firstWeekday=2+固定 now，钉死本周/本月上下边界内外各一、自定义含止日整天+次日排他、全部时间、分类过滤（all/some/未分类不误命中）、CategoryFilter 按 id 相等、双条件叠加、分组日期倒序+组内倒序+同日合并。
 
 改：
-- `Aubade/Features/AppShell/RootTabView.swift`：record 分支 `RecordTabPlaceholder` → `RecordTabView(selection: $selectedTab)`，删除已不用的 `RecordTabPlaceholder`（保留 `LedgerTabPlaceholder` 待切片 03）。
+- `Aubade/Features/AppShell/RootTabView.swift`：账单 Tab `LedgerTabPlaceholder` → `LedgerTabView()`；删除已不用的 `LedgerTabPlaceholder` 私有 struct 及临时占位注释；更新 `AppTab`/`RootTabView` 文档注释（记账/账单已是真实视图）。
 
-不改（确认无回归）：`LedgerStore`（create/update/fetch/presetCategories 签名不动）、`Models/*`、`Enums`、`AubadeApp`、`PersistenceController`、`PresetCategories`、`CategoryStyle`、`project.pbxproj`（file-system-synchronized groups 自动纳编）。
+不改（确认无回归）：`TransactionEditor`/`EditorActions`/`CategoryStyle`/`AmountFormat`（复用，对外形态不动）、`LedgerStore`、所有 `Models/*`、`RecordTabView`（编辑已走共享 EditorActions，无需改）、`AubadeApp`、`PersistenceController`、`project.pbxproj`（file-system-synchronized groups 自动纳编）。
 
 ## 验证情况
 
 - 编译：`xcodebuild -scheme Aubade -destination 'platform=iOS Simulator,name=iPhone 17' build` → **BUILD SUCCEEDED**（验证点 1）。
-- 单测：`xcodebuild test` → **38 例全绿**（新增 TransactionDraft 13 + AmountFormat 7；既有 18 例无回归）。覆盖金额解析合法/空/空白/零/负/非数字、isValid、商户备注归一、create 默认、edit 全字段回填、EditorActions update 真落库读回、千分位符号 `-35.55`/`+8,000.00`、Decimal 无浮点误差（0.1+0.2=0.30）、方向色（验证点 1/2/7 单测侧）。
-- **jflow-review 自评审：1/3 轮 PASS**。两个只读子 agent（代码正确性+TRD符合度 / 上游一致性+范围边界+SwiftUI陷阱）均 PASS，**阻断项：0**。采纳两 agent 共同点名的非阻断修复：3 处 `.alert(isPresented: .constant(...))` 常量绑定→真 `Binding`（系统可回写关闭）、分类 Picker 项 `Label(systemImage:"")` hack→`Text`；修复后重跑 38 例仍全绿。
-- 未做：验证点 2/3/4/5/6/7/8 的模拟器肉眼 UI 交互（真机/模拟器点手动输入填表保存看最近记录刷新、今日已记+1、日期无法选未来、方向切换分类过滤清空、三占位仅弹提示、编辑回填改存刷新、全部跳 Tab）——无头环境无法肉眼验收，编译+单测+Preview 就绪，留待有界面环境确认。
+- 单测：`xcodebuild test` → **50 例全绿**（切片 02 的 38 例无回归 + 本片新增 `LedgerFilterTests` 12 例）。半开区间上下边界内外、自定义、全部、分类过滤、双条件叠加、分组倒序全覆盖（验证点 1）。防御性加固后重跑仍 50 全绿。
+- **jflow-review 自评审：1/3 轮 PASS，阻断项 0**。两只读子 agent（正确性+TRD符合度 / 上游一致性+SwiftUI/SwiftData陷阱）均 PASS：半开区间无 off-by-one 且单测测的是边界瞬时而非中点、过滤/分组/Hashable 自洽、验收全落点、无越界；取色走主 API、无嵌套 NavigationStack、dismiss 关 sheet 正确、删除基于 TransactionDraft 值快照安全、无悬垂 context、CategoryFilter selection 按 id 稳定。采纳两 agent 共同点名的非阻断项做零成本加固：编辑页删除改「先 dismiss 再 delete」。
+- 未做：验证点 2/3/4/5/6/7/8 的模拟器肉眼 UI 交互（分组展示/编辑即时刷新/侧滑与编辑页删除二次确认/分类筛选/时间筛选叠加+自定义禁未来/无汇总卡/闭环回归）——无头环境无法肉眼验收，编译+单测+Preview 就绪，留待有界面环境确认。
 
 ## 遗留风险和注意事项
 
-- **切片 03 复用 EditorActions**：列表进编辑（push 呈现）复用 `EditorActions.makeUpdate` 落库；`makeDelete` 已备好但本片零调用方，切片 03 注入 `onDelete` 时需在调用前套二次确认 UI（`.confirmationDialog`），并注意 `makeDelete` 内 `try? store.delete` 吞了异常，如需删除失败反馈要在切片 03 补。
-- **CategoryStyle 取色规范延续**：`RecentTransactionRow` 已正确用主 API `CategoryStyle.color(name: tx.category?.name, direction: tx.direction)`（nil 分类走 direction 兜底）；切片 03 账单列表标签取色务必同样走主 API，勿用便利 `color(for: nil)`（返回中性灰、丢方向）。
-- **金额 i18n**：`Decimal(string:)` 恒以 `.` 为小数点，逗号小数区域（如 de_DE）输入会解析失败；zh_CN happy path 无碍，i18n 留待后续换 `Decimal(string:locale:)`。
-- **@Query 全量过滤**：todayCount / recentTransactions 取全表内存过滤，当前数据量小 TRD 已认可；数据量大后可换带 fetchLimit/predicate 的 FetchDescriptor（N02 汇总或数据膨胀时评估）。
-- **edit 回填尾零**：`NSDecimalNumber.stringValue` 回填 88.80 显示为 "88.8"，纯展示层、落库数值无误差，不影响正确性。
+- **编辑页删除时序**：已加固为「先 dismiss 再 delete」，理论上消除已删对象重读窗口；两子 agent 推演当前安全，但项目 memory 记录 SwiftData 对已删对象敏感，**建议有界面环境时对「编辑页打开某笔 → 删除这笔 → 确认」冒烟一次**确认无 SIGTRAP，列表侧滑删除路径无此风险。
+- **删除静默失败**：`EditorActions.makeDelete` 内 `try? store.delete` 吞异常（切片 02 定义，本片复用）。本地 SwiftData 删除失败概率极低；若后续要删除失败反馈，需让 delete 返回结果并在 UI 提示。
+- **dismiss 语义链依赖约定**：正确性依赖「`TransactionEditor` 自带 NavigationStack、外层容器不再套栈」；`TransactionDetailView`/`TransactionEditor` 顶部注释已作契约护栏，后续勿在 `TransactionDetailView` 补 NavigationStack。
+- **@Query 全量过滤**：账单列表取全表内存过滤/分组，TRD 已认可；数据量大后（N02 汇总或膨胀时）再评估带 predicate/fetchLimit 的 FetchDescriptor。
+- **金额 i18n / edit 回填尾零**：延续切片 02 已知项（`Decimal(string:)` 恒 `.` 小数点；`88.80` 回填显示 `88.8`），纯展示、不影响落库正确性。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n01-manual-ledger/03-ledger-list-filter-trd.md`。
-2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/n01-manual-ledger/03-ledger-list-filter-trd.md`，只实现该 TRD 切片。
+全部 TRD 已完成。下一次若继续，请从 PRD 验收标准和最终验证情况开始检查。
 
 补充说明：
-1. 读取 `.claude/jflow/current.json` 的 `next_trd`，应为 `docs/design/nodes/n01-manual-ledger/03-ledger-list-filter-trd.md`。
-2. 读取该 TRD 同目录 `99-slice-progress.md` 和 `.claude/jflow/handoff.md`（本片刚更新）。
-3. 打开切片 03 TRD（`03-ledger-list-filter-trd.md`），以其实际范围为准，只实现该切片。预计涉及账单 Tab 流水列表 + 从列表进编辑页（复用 `TransactionEditor(.edit)` + `EditorActions.makeUpdate`，push 呈现）+ 删除（注入 `onDelete` = 二次确认 + `EditorActions.makeDelete`），替换 `RootTabView` 的 `LedgerTabPlaceholder`；细节以 TRD 为准。
-- 复用资产：`TransactionEditor` 双模式组件、`EditorActions.makeUpdate/makeDelete`、`AmountFormat`、`CategoryStyle`（取色走主 API）。
+本片是 N01 节点最后一个 TRD 切片，`completed_trds` 将含全部 3 片。恢复步骤：
+1. 读取 `.claude/jflow/current.json`，确认 N01 三片全部完成、`next_trd` 应为空（本节点无后续切片）。
+2. 按 DAG（`docs/design/aubade-v1-dev-dag.md`）确认 N01 节点状态可标完成、下一个可开发节点（预期 N02 统计/汇总卡）；`next_action` 指向为下一节点生成 PRD。
+3. `config.json.main_branch` 为 null——合并主线前需先与用户确认主分支（当前分支 `main`，但 config 未固化）。
+4. 复用资产已就绪：`LedgerFilter`（过滤/分组纯函数）、`LedgerTabView`/`LedgerRowView`、`TransactionDetailView`、切片 02 的 `TransactionEditor`/`EditorActions`/`CategoryStyle`/`AmountFormat`。N02 汇总卡将挂在 `LedgerTabView` 顶部（本片刻意留空未做）。

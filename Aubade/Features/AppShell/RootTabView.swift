@@ -10,7 +10,7 @@ enum AppTab: Hashable {
 }
 
 /// App 主框架：底部四 Tab（记账 · 账单 · 统计 · 我的），默认落「记账」（验收 8）。
-/// 记账/账单为临时占位（切片 02/03 替换）；统计/我的为正式占位（本节点终态，N02/N07 才填）。
+/// 记账/账单为真实视图（切片 02/03）；统计/我的为正式占位（本节点终态，N02/N07 才填）。
 struct RootTabView: View {
     @State private var selectedTab: AppTab = .record
 
@@ -20,7 +20,7 @@ struct RootTabView: View {
                 .tag(AppTab.record)
                 .tabItem { Label("记账", systemImage: "pencil") }
 
-            LedgerTabPlaceholder()
+            LedgerTabView()
                 .tag(AppTab.ledger)
                 .tabItem { Label("账单", systemImage: "list.bullet") }
 
@@ -32,16 +32,6 @@ struct RootTabView: View {
                 .tag(AppTab.profile)
                 .tabItem { Label("我的", systemImage: "person") }
         }
-    }
-}
-
-// MARK: - 临时占位（切片 03 替换为真实视图）
-
-/// TODO(N01-03) 替换为账单 Tab 真实视图（流水列表 / 筛选 / 编辑删除）。
-private struct LedgerTabPlaceholder: View {
-    var body: some View {
-        ContentUnavailableView("账单", systemImage: "list.bullet",
-                               description: Text("账单列表即将上线"))
     }
 }
 

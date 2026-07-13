@@ -8,7 +8,7 @@
 
 - **账单 Tab 流水列表**（替换切片 01 的 `LedgerTabPlaceholder`）：按 `occurredAt` 日期分组、组内倒序；每项 = 分类彩色标签 + 商户/备注摘要 + 方向金额。**不含顶部汇总卡**（→ N02）。
 - **筛选**：分类（全部 + 各分类）× 时间范围（全部 / 本周 / 本月 / 自定义起止），可叠加，结果与条件一致。
-- **详情/编辑**：点账单进编辑页，复用切片 02 的 `TransactionEditor(.edit(tx))` 改字段，经 `updateTransaction` 保存。
+- **详情/编辑**：点账单 `.sheet` 呈现编辑页，复用切片 02 的 `TransactionEditor(.edit(tx))` 改字段，经 `updateTransaction` 保存。
 - **删除**：二次确认后经 `LedgerStore.delete` 删除，返回列表。
 - **空状态**：无账单引导去记账；筛选无结果显示对应空态。
 
@@ -23,7 +23,7 @@
   - `LedgerTabPlaceholder`（`RootTabView` 内）本片替换为 `LedgerTabView`。
   - `CategoryStyle`（切片 01）：列表标签 emoji + 色、分类筛选项配色。
   - `AmountFormat`（切片 02）：方向金额串 + 色（`-35.55` 深色 / `+8,000.00` 绿）。
-  - `TransactionEditor` + `EditorMode.edit`（切片 02）：编辑页复用；本片补 `onDelete` 注入二次确认 + delete。
+  - `TransactionEditor` + `EditorMode.edit`（切片 02）：编辑页复用（`.sheet` 呈现，见设计方案 §4）；本片补 `onDelete` 注入二次确认 + delete。
 - **注入契约**：同切片 02——`@Environment(\.modelContext)` + `@Query`；写经 `LedgerStore`；禁链式 `container().mainContext`（N00 SIGTRAP 坑，memory `swiftdata_dangling_context`）。
 
 ## 设计方案
@@ -63,7 +63,7 @@ enum DateRangeFilter: Hashable {
 
 ### 4. 详情 / 编辑页
 
-- 列表行 / 记账页最近记录点击 → push（`NavigationStack` + `NavigationLink`）呈现 `TransactionEditor(mode: .edit(tx))`。**选 push**（详情页语义，原型"点某笔进详情"），账单 Tab 用 `NavigationStack` 包裹。（记账页最近记录在切片 02 用 `.sheet` 呈现同一 editor——两处呈现容器不同但**落库逻辑同源**，见下。）
+- 列表行点击 → `.sheet` 呈现 `TransactionEditor(mode: .edit(tx))`（经 `TransactionDetailView` 容器注入 onSave/onDelete）。**呈现方式定为 sheet**（原 TRD 措辞为 push，实现时修正）：切片 02 的 `TransactionEditor` 内部自带 `NavigationStack`（为 sheet 呈现设计，含自身取消/保存 toolbar），若 push 会嵌套导航栈导致双导航栏；且本 TRD 约束"不改 `TransactionEditor` 对外形态"。故与记账页最近记录（切片 02 亦 `.sheet`）统一为 sheet 呈现——两处**呈现容器一致、落库逻辑同源**。账单 Tab 仍用 `NavigationStack` 承载导航栏标题与筛选栏布局。
 - 保存：复用切片 02 落地的 `EditorActions` 构造 `edit` 的 `onSave`（内部 `LedgerStore(context).updateTransaction(tx){ 回写 amount/direction/category/occurredAt/merchant/note }`，`updatedAt` 由 Store 内部刷新，验收 3）。**不在本片重写 update 逻辑**，避免与 02 两处重复。保存后返回列表，`@Query` 自动同步（验收 3）。
 - 编辑页显示商户行（`.edit` 模式，切片 02 已定）。
 
@@ -77,7 +77,7 @@ enum DateRangeFilter: Hashable {
 ## 修改点
 
 **改**
-- `Aubade/Features/AppShell/RootTabView.swift`：账单 Tab 从 `LedgerTabPlaceholder` 换为 `LedgerTabView`（用 `NavigationStack` 包裹以支持进编辑页）。
+- `Aubade/Features/AppShell/RootTabView.swift`：账单 Tab 从 `LedgerTabPlaceholder` 换为 `LedgerTabView`（用 `NavigationStack` 包裹以承载导航栏标题与筛选栏；编辑页经 `.sheet` 呈现，不用 push 以避免与 `TransactionEditor` 内建 `NavigationStack` 嵌套）。
 - `Aubade/Features/Record/RecordTabView.swift`（切片 02）：最近记录点击进编辑的路径，与本片列表进编辑复用同一 `TransactionEditor(.edit)`；若切片 02 已用 sheet，本片保持不破坏，仅确保编辑保存/删除逻辑一致（编辑 onSave/onDelete 抽为共享构造，避免两处重复）。
 
 **新增**
