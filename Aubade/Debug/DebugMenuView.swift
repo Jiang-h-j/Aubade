@@ -42,6 +42,13 @@ struct DebugMenuView: View {
                 }
                 Button("清空全部数据", role: .destructive) { resetAll() }
             }
+
+            Section("N02 调试（预算 / 初始总额）") {
+                Button("写月预算 1500") { setBudget(.monthly, 1500, "月预算 1500") }
+                Button("写周预算 800") { setBudget(.weekly, 800, "周预算 800") }
+                Button("写初始总额 12000") { setBaseline(12000) }
+                Button("清空预算", role: .destructive) { clearBudgets() }
+            }
         }
         .navigationTitle("调试菜单")
     }
@@ -68,6 +75,37 @@ struct DebugMenuView: View {
             lastMessage = "已清空全部数据"
         } catch {
             lastMessage = "清空失败：\(error)"
+        }
+    }
+
+    // MARK: - N02 调试：写预算 / 初始总额（正式设置界面在 N07）
+
+    private func setBudget(_ periodType: BudgetPeriodType, _ amount: Decimal, _ desc: String) {
+        do {
+            try LedgerStore(context).setBudget(periodType: periodType, amount: amount)
+            lastMessage = "已写\(desc)"
+        } catch {
+            lastMessage = "写预算失败：\(error)"
+        }
+    }
+
+    private func setBaseline(_ amount: Decimal) {
+        do {
+            try LedgerStore(context).setBalanceBaseline(initialAmount: amount, establishedAt: Date())
+            lastMessage = "已写初始总额 \(AmountFormat.plainString(amount))"
+        } catch {
+            lastMessage = "写初始总额失败：\(error)"
+        }
+    }
+
+    private func clearBudgets() {
+        do {
+            let store = LedgerStore(context)
+            for budget in try store.fetch(Budget.self) { context.delete(budget) }
+            try context.save()
+            lastMessage = "已清空预算"
+        } catch {
+            lastMessage = "清空预算失败：\(error)"
         }
     }
 }

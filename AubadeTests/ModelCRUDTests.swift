@@ -97,4 +97,20 @@ final class ModelCRUDTests: XCTestCase {
         try store.delete(baseline)
         XCTAssertTrue(try store.fetch(BalanceBaseline.self).isEmpty)
     }
+
+    /// N02 切片 03：setBudget 写侧唯一化——连写两次同周期只留一条（读侧 first 稳定取到最新值）。
+    func testSetBudgetUniquePerPeriod() throws {
+        let store = makeStore()
+
+        try store.setBudget(periodType: .monthly, amount: 1500)
+        try store.setBudget(periodType: .monthly, amount: 2000)   // 覆盖同周期
+        let monthly = try store.fetch(Budget.self).filter { $0.periodType == .monthly }
+        XCTAssertEqual(monthly.count, 1, "同 periodType 写侧唯一化后至多一条")
+        XCTAssertEqual(monthly.first?.amount, Decimal(2000), "first 取到最后写入值")
+
+        // 周与月各自独立，互不清除。
+        try store.setBudget(periodType: .weekly, amount: 800)
+        XCTAssertEqual(try store.fetch(Budget.self).count, 2, "周+月各一条并存")
+        XCTAssertEqual(try store.fetch(Budget.self).filter { $0.periodType == .monthly }.count, 1)
+    }
 }
