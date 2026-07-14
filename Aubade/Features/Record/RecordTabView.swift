@@ -18,8 +18,25 @@ struct RecordTabView: View {
     @Query(sort: \LedgerCategory.sortOrder) private var categories: [LedgerCategory]
 
     @State private var showingManualEntry = false
-    @State private var placeholderEntryTitle: String?   // 三占位入口点击提示（非 nil 即弹）
+    @State private var showingTextRecognition = false   // 文本识别页（本片接通）
+    @State private var placeholderEntryTitle: String?   // 余两占位入口点击提示（非 nil 即弹）
     @State private var editingTransaction: Transaction?
+
+    #if DEBUG
+    // DEBUG 运行时 mock 行为：调试菜单写、此处读，切换识别成功/无金额/网络失败等（TRD 03 §5）。
+    @AppStorage(DebugMockSettings.behaviorKey) private var mockBehaviorRaw = MockTransactionParser.Behavior.success.rawValue
+    #endif
+
+    /// 文本识别解析器注入：生产走 DeepSeekClient；DEBUG（模拟器/预览）走 mock。
+    /// DEBUG 下 mock 行为由调试菜单经 @AppStorage 运行时切换（成功/无金额/网络失败/超时）。
+    private var textParser: TransactionParsing {
+        #if DEBUG
+        let behavior = MockTransactionParser.Behavior(rawValue: mockBehaviorRaw) ?? .success
+        return MockTransactionParser(behavior: behavior)
+        #else
+        return DeepSeekClient()
+        #endif
+    }
 
     /// 今日已记笔数：createdAt 落在今天。
     private var todayCount: Int {
@@ -50,6 +67,9 @@ struct RecordTabView: View {
             .sheet(isPresented: $showingManualEntry) {
                 ManualEntryView()
             }
+            .fullScreenCover(isPresented: $showingTextRecognition) {
+                TextRecognitionView(parser: textParser, categories: categories)
+            }
             .sheet(item: $editingTransaction) { tx in
                 editSheet(for: tx)
             }
@@ -70,7 +90,7 @@ struct RecordTabView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             EntryButton(emoji: "📷", title: "截图识别") { placeholderEntryTitle = "截图识别" }
             EntryButton(emoji: "🎤", title: "语音记账") { placeholderEntryTitle = "语音记账" }
-            EntryButton(emoji: "📋", title: "文本识别") { placeholderEntryTitle = "文本识别" }
+            EntryButton(emoji: "📋", title: "文本识别") { showingTextRecognition = true }
             EntryButton(emoji: "✏️", title: "手动输入") { showingManualEntry = true }
         }
     }

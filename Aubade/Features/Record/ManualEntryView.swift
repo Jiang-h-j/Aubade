@@ -10,6 +10,13 @@ struct ManualEntryView: View {
     // 分类选择器查全部分类（对 N07 自建分类前向兼容），组件内按当前方向过滤。
     @Query(sort: \LedgerCategory.sortOrder) private var categories: [LedgerCategory]
 
+    /// 转手动带原文预填备注（N03 识别失败转手动，验收 6）。默认 nil：现有 `ManualEntryView()` 调用不受影响。
+    private let prefillNote: String?
+
+    init(prefillNote: String? = nil) {
+        self.prefillNote = prefillNote
+    }
+
     var body: some View {
         TransactionEditor(
             mode: .create(direction: .expense),
@@ -27,7 +34,8 @@ struct ManualEntryView: View {
                     note: draft.normalizedNote,
                     source: .manual
                 )
-            }
+            },
+            initialNote: prefillNote            // 转手动时预填识别原文进备注
         )
     }
 }

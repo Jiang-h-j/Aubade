@@ -28,21 +28,33 @@ struct TransactionEditor: View {
     @State private var draft: TransactionDraft
     @State private var saveError: String?
 
+    /// 新建模式的初始备注（N03 识别失败转手动：把识别原文预填进备注，验收 6）。
+    /// 向后兼容可选参数，默认 nil；仅 `.create` 分支消费，`.edit` 从 tx 回填不受影响。
+    /// 现有 3 处调用（ManualEntryView / RecordTabView.editSheet / TransactionDetailView）不传，零影响。
     init(mode: EditorMode,
          categories: [LedgerCategory],
          onSave: @escaping (TransactionDraft) throws -> Void,
          onDelete: (() -> Void)? = nil,
-         rawText: String? = nil) {
+         rawText: String? = nil,
+         initialNote: String? = nil) {
         self.mode = mode
         self.categories = categories
         self.onSave = onSave
         self.onDelete = onDelete
         self.rawText = rawText
+        _draft = State(initialValue: Self.makeInitialDraft(mode: mode, initialNote: initialNote))
+    }
+
+    /// 从 mode + initialNote 构造初始草稿（脱 View 的可测核心，同 `RecognitionEntry` 惯例）：
+    /// `.create` 用初始方向建空草稿并把 initialNote 预填进 note；`.edit` 从既有 tx 逐字段回填、忽略 initialNote。
+    static func makeInitialDraft(mode: EditorMode, initialNote: String?) -> TransactionDraft {
         switch mode {
         case .create(let direction):
-            _draft = State(initialValue: TransactionDraft(direction: direction, occurredAt: Date()))
+            var d = TransactionDraft(direction: direction, occurredAt: Date())
+            if let initialNote { d.note = initialNote }   // 仅 create 预填；edit 从 tx 回填不碰
+            return d
         case .edit(let tx):
-            _draft = State(initialValue: TransactionDraft(from: tx))
+            return TransactionDraft(from: tx)
         }
     }
 
@@ -76,6 +88,7 @@ struct TransactionEditor: View {
                 dateSection
                 if showsMerchant { merchantSection }
                 noteSection
+                if let rawText, !rawText.isEmpty { rawTextSection(rawText) }
                 if let onDelete { deleteSection(onDelete) }
             }
             .navigationTitle(navigationTitle)
@@ -157,6 +170,18 @@ struct TransactionEditor: View {
         Section("备注") {
             TextField("备注", text: $draft.note, axis: .vertical)
                 .lineLimit(1...3)
+        }
+    }
+
+    /// 识别原文折叠区（原型 §4.3）：仅结果卡片注入非空 rawText 时渲染，手动入口 rawText=nil 不显示。默认收起。
+    private func rawTextSection(_ raw: String) -> some View {
+        Section {
+            DisclosureGroup("查看识别到的原始文本") {
+                Text(raw)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
