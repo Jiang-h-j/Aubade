@@ -11,14 +11,18 @@ import UIKit
 @MainActor
 enum RecognitionEntry {
     /// - now: 注入当前时刻（测试可固定，验证时间不越未来）。
-    /// - rawText 落用户输入的原文（不是 mock 的内部 raw）。
+    /// - source: 账单来源入口，默认 `.text`（N03 文本识别）；语音调用传 `.voice`（切片 03）。
+    /// - rawText: 落库原文，默认 `nil` = 沿用 `text`（与 N03 现状等价）；语音传带 `[语音转文字]` 前缀的原文，
+    ///   使 parse 输入（纯口语）与落库原文（带前缀）分离。
     @discardableResult
     static func recognizeAndSave(text: String,
                                  categories: [LedgerCategory],
                                  parser: TransactionParsing,
                                  store: LedgerStore,
-                                 now: Date) async throws -> Transaction {
-        let parsed = try await parser.parse(text: text, categories: categories)
+                                 now: Date,
+                                 source: TransactionSource = .text,
+                                 rawText: String? = nil) async throws -> Transaction {
+        let parsed = try await parser.parse(text: text, categories: categories)   // parse 用纯口语 text
         let amount = try RecognitionNormalizer.amount(parsed.amountText)   // 无金额 → 抛 .noAmount（落库前）
         let occurredAt = RecognitionNormalizer.occurredAt(parsed.occurredAt, now: now)
         let category = RecognitionNormalizer.category(name: parsed.categoryName,
@@ -30,8 +34,8 @@ enum RecognitionEntry {
             category: category,
             merchant: parsed.merchant,
             cardTail: parsed.cardTail,
-            source: .text,
-            rawText: text)
+            source: source,
+            rawText: rawText ?? text)
     }
 }
 

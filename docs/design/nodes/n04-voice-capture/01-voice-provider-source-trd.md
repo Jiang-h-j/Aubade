@@ -15,7 +15,7 @@
 单一职责:**语音链路的可注入、脱 View、可单测的纯逻辑底座**。
 
 - 新增语音转文字 provider 协议 `VoiceTranscribing` + 可区分错误 `VoiceTranscribeError`(对齐 N03 `TransactionParsing`/`RecognitionError` 范式)。
-- 新增 mock 实现 `MockVoiceTranscriber`(behavior 驱动四态,供 DEBUG/预览/单测)。
+- 新增 mock 实现 `MockVoiceTranscriber`(behavior 驱动五态,供 DEBUG/预览/单测)。
 - `RecognitionEntry.recognizeAndSave` **向后兼容参数化** `source`(默认 `.text`)与 `rawText`(默认 `nil` = 沿用 `text`)。
 - `MockTransactionParser` 增加 `.voiceSample` 行为(金额 20 / 支出 / 分类"行"),作为语音验收定值。
 - 单元测试覆盖上述所有分支。
