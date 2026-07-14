@@ -3,15 +3,16 @@ import SwiftData
 
 /// 账单 Tab 真实视图（原型 §4.1，切片 03），替换切片 01 的 `LedgerTabPlaceholder`。
 ///
-/// 组成：顶部筛选栏（分类 × 时间范围，叠加）+ 按自然日分组的流水列表 + 侧滑删除（二次确认）
-/// + 点行进编辑 sheet（复用 `TransactionDetailView`）。空账本与筛选无结果分别有空态。
-/// **不含顶部汇总卡**（验收 10；汇总区 → N02）。
+/// 组成：顶部汇总卡（剩余总额 · 本月支出 · 本月收入，N02）+ 筛选栏（分类 × 时间范围，叠加）
+/// + 按自然日分组的流水列表 + 侧滑删除（二次确认）+ 点行进编辑 sheet（复用 `TransactionDetailView`）。
+/// 空账本与筛选无结果分别有空态。
 ///
 /// 数据：`@Query` 取全量按 occurredAt 倒序，内存过滤/分组（TRD §1，数据量小、增删改自动刷新）。
 struct LedgerTabView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Transaction.occurredAt, order: .reverse) private var allTransactions: [Transaction]
     @Query(sort: \LedgerCategory.sortOrder) private var categories: [LedgerCategory]
+    @Query private var baselines: [BalanceBaseline]
 
     @State private var categoryFilter: CategoryFilter = .all
     @State private var dateFilter: DateRangeFilter = .all
@@ -36,6 +37,7 @@ struct LedgerTabView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                summaryCard
                 filterBar
                 content
             }
@@ -57,7 +59,68 @@ struct LedgerTabView: View {
         }
     }
 
-    // MARK: - 筛选栏（原型 §4.1，不含汇总卡）
+    // MARK: - 汇总卡（原型 §4.1 hero：剩余总额 · 本月支出 · 本月收入）
+
+    /// 本月合计用的日历：周首日=周一（节点约束 4，与切片 02 统一；本月区间不涉周首日但保持一致）。
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.firstWeekday = 2
+        return c
+    }
+
+    /// 当前有效基线：取 establishedAt 最新一条（防御多条并存，与 store.currentBaseline 同口径）。
+    private var currentBaseline: BalanceBaseline? {
+        baselines.max { $0.establishedAt < $1.establishedAt }
+    }
+
+    /// 本月账单（半开区间 [本月, 下月)，复用 LedgerFilter 口径）。
+    private var monthTransactions: [Transaction] {
+        LedgerFilter.apply(allTransactions, category: .all, dateRange: .thisMonth,
+                           now: Date(), calendar: calendar)
+    }
+
+    private var summaryCard: some View {
+        let remaining = BalanceCalculator.remaining(transactions: allTransactions,
+                                                    baseline: currentBaseline)
+        let month = monthTransactions
+        return VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("剩余总额")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text(remaining.map { "¥" + AmountFormat.plainString($0) } ?? "—")
+                    .font(.system(size: 34, weight: .bold))
+                    .monospacedDigit()
+            }
+            HStack(spacing: 26) {
+                summaryColumn(title: "本月支出",
+                              amount: BalanceCalculator.sum(month, direction: .expense),
+                              direction: .expense)
+                summaryColumn(title: "本月收入",
+                              amount: BalanceCalculator.sum(month, direction: .income),
+                              direction: .income)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    private func summaryColumn(title: String, amount: Decimal,
+                               direction: TransactionDirection) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption).foregroundStyle(.secondary)
+            Text("¥" + AmountFormat.plainString(amount))
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(AmountFormat.color(for: direction))
+        }
+    }
+
+    // MARK: - 筛选栏（原型 §4.1）
 
     private var filterBar: some View {
         HStack(spacing: 12) {

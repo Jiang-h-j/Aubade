@@ -87,6 +87,23 @@ struct LedgerStore {
         return baseline
     }
 
+    /// 设置/调整唯一初始总额基线：删除所有既有 BalanceBaseline，再插入一条新的。
+    /// 唯一化用"清空+插入"而非 update——基线无业务主键、量极小（0~1 条），清插最简单且天然收敛到一条。
+    /// establishedAt 显式传入以便测试注入；生产传 Date()，语义为"此刻账户合计的新起点"。
+    func setBalanceBaseline(initialAmount: Decimal, establishedAt: Date) throws {
+        let existing = try fetch(BalanceBaseline.self)
+        for baseline in existing {
+            context.delete(baseline)
+        }
+        try createBalanceBaseline(initialAmount: initialAmount, establishedAt: establishedAt)
+    }
+
+    /// 读当前有效基线：取 establishedAt 最新一条（防御多条并存）。
+    func currentBaseline() throws -> BalanceBaseline? {
+        try fetch(BalanceBaseline.self,
+                  sortBy: [SortDescriptor(\.establishedAt, order: .reverse)]).first
+    }
+
     // MARK: - 通用删除
 
     func delete<T: PersistentModel>(_ model: T) throws {
