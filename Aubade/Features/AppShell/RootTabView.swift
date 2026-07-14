@@ -11,7 +11,7 @@ enum AppTab: Hashable {
 }
 
 /// App 主框架：底部四 Tab（记账 · 账单 · 统计 · 我的），默认落「记账」（验收 8）。
-/// 记账/账单为真实视图（切片 02/03）；统计/我的为正式占位（本节点终态，N02/N07 才填）。
+/// 记账/账单/统计为真实视图；我的为正式占位（顶部剩余总额已接，完整设置 N07 才填）。
 struct RootTabView: View {
     @State private var selectedTab: AppTab = .record
 
@@ -25,7 +25,7 @@ struct RootTabView: View {
                 .tag(AppTab.ledger)
                 .tabItem { Label("账单", systemImage: "list.bullet") }
 
-            AnalyticsPlaceholderView()
+            AnalyticsTabView(selection: $selectedTab)
                 .tag(AppTab.analytics)
                 .tabItem { Label("统计", systemImage: "chart.bar") }
 
@@ -37,14 +37,6 @@ struct RootTabView: View {
 }
 
 // MARK: - 正式占位（本节点终态）
-
-/// 统计 Tab 正式占位：N02 才提供实际功能。
-struct AnalyticsPlaceholderView: View {
-    var body: some View {
-        ContentUnavailableView("统计", systemImage: "chart.bar",
-                               description: Text("统计功能即将在后续版本提供"))
-    }
-}
 
 /// 我的 Tab：顶部剩余总额 + 录入/调整初始总额（N02 M6）；完整设置（预算/Key/分类）→ N07。
 /// DEBUG 构建下把 N00 的调试入口（原 `ContentView` 内）迁到这里；用 `NavigationStack`

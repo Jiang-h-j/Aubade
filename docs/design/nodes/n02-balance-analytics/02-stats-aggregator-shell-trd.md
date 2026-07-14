@@ -73,7 +73,9 @@ enum StatisticsAggregator {
     static func total(_ txs: [Transaction], in p: StatPeriod, direction: TransactionDirection) -> Decimal
 
     /// 支出分类占比：降序，pct=四舍五入百分比。总支出为 0 时返回空数组（占比区空态）。
-    static func expenseBreakdown(_ txs: [Transaction], in p: StatPeriod, calendar: Calendar)
+    /// 无需 calendar——仅按 period 具体日期半开过滤 + 按 category?.id 分组（与 total 同口径，
+    /// 区别于需枚举时间桶的 expenseTrend）。切片 03 按此 2 参签名消费。
+    static func expenseBreakdown(_ txs: [Transaction], in p: StatPeriod)
         -> [BreakdownRow]
 
     /// 支出趋势序列：桶跟随粒度（week/day=所在周7天、month=当月每日、year=当年12月）。
