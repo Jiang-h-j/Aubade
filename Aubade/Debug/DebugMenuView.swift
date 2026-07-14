@@ -2,6 +2,12 @@
 import SwiftUI
 import SwiftData
 
+/// DEBUG mock 识别行为的持久化设置：调试菜单写、RecordTabView 读（TRD 03 §5）。
+/// 仅 DEBUG 调试用（非 Key、非业务数据），存 UserDefaults 无妨。
+enum DebugMockSettings {
+    static let behaviorKey = "debug.mockBehavior"
+}
+
 /// 临时验证入口（仅 DEBUG）：手动触发插入样例账单 / 列出预置分类 / 清库重置，
 /// 供真机或模拟器肉眼确认容器单点共享（PRD 验收 6）。Release 构建不含此入口。
 struct DebugMenuView: View {
@@ -11,6 +17,8 @@ struct DebugMenuView: View {
     @Query private var transactions: [Transaction]
 
     @State private var lastMessage: String = ""
+    // N03 mock 行为选择（与 RecordTabView 共用同一 @AppStorage key）。
+    @AppStorage(DebugMockSettings.behaviorKey) private var mockBehaviorRaw = MockTransactionParser.Behavior.success.rawValue
 
     var body: some View {
         List {
@@ -48,6 +56,25 @@ struct DebugMenuView: View {
                 Button("写周预算 800") { setBudget(.weekly, 800, "周预算 800") }
                 Button("写初始总额 12000") { setBaseline(12000) }
                 Button("清空预算", role: .destructive) { clearBudgets() }
+            }
+
+            Section("N03 调试（DeepSeek Key / mock 识别）") {
+                Text("Key 状态：\(KeychainStore.shared.isConfigured ? "已配置" : "未配置")")
+                Button("写入测试 Key") {
+                    KeychainStore.shared.setDeepSeekKey("sk-debug-placeholder")
+                    lastMessage = "已写入测试 Key（占位，非真 Key）"
+                }
+                Button("清除 Key", role: .destructive) {
+                    KeychainStore.shared.clearDeepSeekKey()
+                    lastMessage = "已清除 Key"
+                }
+                Picker("mock 识别结果", selection: $mockBehaviorRaw) {
+                    Text("成功").tag(MockTransactionParser.Behavior.success.rawValue)
+                    Text("无金额").tag(MockTransactionParser.Behavior.noAmount.rawValue)
+                    Text("网络失败").tag(MockTransactionParser.Behavior.network.rawValue)
+                    Text("超时").tag(MockTransactionParser.Behavior.timeout.rawValue)
+                    Text("非法响应").tag(MockTransactionParser.Behavior.invalidResponse.rawValue)
+                }
             }
         }
         .navigationTitle("调试菜单")

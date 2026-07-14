@@ -4,7 +4,8 @@ import Foundation
 /// success 恒返回 data.js MOCK_RECOGNIZE.text 定值（工行短信样例，cat 为"其他"）——
 /// 验收观察的是链路与字段落库，而非通用真解析。
 struct MockTransactionParser: TransactionParsing {
-    enum Behavior { case success, noAmount, network, timeout, invalidResponse }
+    /// String rawValue：供 DEBUG 调试菜单经 @AppStorage 持久化选择的 mock 行为（TRD 03 §5）。
+    enum Behavior: String, CaseIterable { case success, noAmount, network, timeout, invalidResponse }
     var behavior: Behavior = .success
 
     /// 样例时间 "2026-07-10 15:22"（对齐 demo 定值）。用 DateComponents 构造避免 locale/解析器差异。

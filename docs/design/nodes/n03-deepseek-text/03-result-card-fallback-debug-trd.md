@@ -152,11 +152,14 @@ Section("N03 调试（DeepSeek Key / mock 识别）") {
 
 | 文件 | 改动 |
 |---|---|
-| `Aubade/Features/Editor/TransactionEditor.swift` | ① body 新增折叠原文 Section（消费已声明的 `rawText`）；② init 新增 `initialNote: String? = nil`，`.create` 分支预填 `draft.note`（供转手动带原文）。**两处均向后兼容默认参数，N01 现有 3 处调用零影响；不改 `TransactionDraft`** |
-| `Aubade/Features/Recognition/TextRecognitionView.swift` | 成功分支改 dismiss 为弹结果卡片（`.sheet(item:$resultTx)`）+ 关闭链 `onChange(of:resultTx)`；删除二次确认 `.alert`；失败分支补转手动/重试按钮 |
+| `Aubade/Features/Editor/TransactionEditor.swift` | ① body 新增折叠原文 Section（消费已声明的 `rawText`）；② init 新增 `initialNote: String? = nil`，`.create` 分支预填 `draft.note`（供转手动带原文）；初始草稿构造抽为 `static makeInitialDraft` 可测核心。**两处均向后兼容默认参数，N01 现有 3 处调用零影响；不改 `TransactionDraft`** |
+| `Aubade/Features/Recognition/TextRecognitionView.swift` | 成功分支改 dismiss 为弹结果卡片（`.sheet(item:$resultTx, onDismiss:)`）+ 新增 `RecognitionResultCard` 子视图（同构 N01 `TransactionDetailView` 删除二次确认）；失败分支补转手动/重试（`retryToken` + `onChange`）按钮 |
+| `Aubade/Features/Recognition/Parsing/RecognitionError.swift` | 新增 `isRetryable` 计算属性（network/timeout/invalidResponse 可重试；noAmount/noKey 不给重试）。纯增量、向后兼容 |
+| `Aubade/Features/Recognition/Parsing/MockTransactionParser.swift` | `Behavior` 加 `: String, CaseIterable`（供 DEBUG @AppStorage rawValue 持久化）。给 enum 加 rawValue 不破坏切片 01/02 按 case 名的消费 |
 | `Aubade/Features/Record/ManualEntryView.swift` | 新增 `init(prefillNote: String? = nil)`，透传 `TransactionEditor(initialNote:)`（默认 nil，现有 `ManualEntryView()` 调用不受影响） |
-| `Aubade/Debug/DebugMenuView.swift` | 新增 N03 调试 Section（写/清 Key + mock 行为 Picker）；`RecordTabView` DEBUG 注入读 `@AppStorage` mock 行为 |
-| `AubadeTests/ResultCardActionsTests.swift` | **新增**：完成回写 / 删除撤销 / 转手动预填单测（见验证点） |
+| `Aubade/Features/Record/RecordTabView.swift` | DEBUG `textParser` 改为读 `@AppStorage(DebugMockSettings.behaviorKey)` 决定 mock 行为（替代编译期固定 mock） |
+| `Aubade/Debug/DebugMenuView.swift` | 新增 `DebugMockSettings.behaviorKey` 常量 + N03 调试 Section（写/清 Key + mock 行为 Picker） |
+| `AubadeTests/ResultCardActionsTests.swift` | **新增**：完成回写 / 删除撤销 / 转手动预填 / edit 忽略 initialNote 单测（4 条，见验证点） |
 
 ## 验证点
 

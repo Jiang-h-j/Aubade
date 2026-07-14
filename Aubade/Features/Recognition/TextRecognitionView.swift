@@ -37,8 +37,8 @@ enum RecognitionEntry {
 
 /// 文本识别页（原型 §4.3 openTextInput）：粘贴框 + 读剪贴板 + 识别并记账。
 ///
-/// 本片终态：识别成功即入账并 dismiss 回记账页（最近记录 +1）；
-/// 结果卡片、失败转手动带原文、DEBUG 运行时 mock 开关 → 切片 03。
+/// 切片 03 终态：识别成功 → 先入账 → 弹**结果卡片**（复用 `TransactionEditor(.edit)` + 折叠原文 + 改/删撤销）；
+/// 识别失败 → 按错误类型给「转手动填写（带原文）」/「重试」；关闭链经 `resultTx` 归 nil 回记账页。
 struct TextRecognitionView: View {
     let parser: TransactionParsing        // 注入：生产 DeepSeekClient / 测试预览 Mock
     let categories: [LedgerCategory]      // RecordTabView 的 @Query 传入
@@ -50,6 +50,9 @@ struct TextRecognitionView: View {
     @State private var phase: RecognitionPhase = .idle
     @State private var showingKeySheet = false
     @State private var showKeyBlockedAlert = false
+    @State private var resultTx: Transaction?          // 识别成功入账后的账单 → 触发结果卡片
+    @State private var showingManualEntry = false      // 失败转手动（带原文预填）
+    @State private var retryToken = 0                  // 重试：alert 关闭后经 onChange 重新识别
 
     private var trimmed: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -121,14 +124,32 @@ struct TextRecognitionView: View {
             } message: {
                 Text("识别类记账要用到 DeepSeek。填入你的 API Key 即可，手动记账不受影响。")
             }
-            // 失败提示：按 RecognitionError 分支文案（转手动 / 重试 → 切片 03）。
-            .alert(failureTitle, isPresented: isFailedBinding, presenting: failedError) { _ in
-                Button("好", role: .cancel) { phase = .idle }
+            // 失败提示：按 RecognitionError 分支给「转手动填写（带原文）」/「重试」/「取消」。
+            .alert(failureTitle, isPresented: isFailedBinding, presenting: failedError) { error in
+                if error.isRetryable {
+                    Button("重试") { phase = .idle; retryToken += 1 }           // 经 onChange 重新识别
+                }
+                Button("转手动填写") { phase = .idle; showingManualEntry = true }
+                Button("取消", role: .cancel) { phase = .idle }
             } message: { error in
                 Text(failureMessage(for: error))
             }
             .sheet(isPresented: $showingKeySheet) {
                 KeySetupSheet()
+            }
+            // 识别成功结果卡片（复用 TransactionEditor.edit + 折叠原文 + 改/删撤销）。
+            // onDismiss：结果卡片关闭（完成回写 / 删除撤销 均触发）后 dismiss 识别页回记账页（验收 2/3）。
+            // 用 onDismiss 而非 onChange：Transaction 是 @Model class 未声明 Equatable，onChange(of:) 编不过。
+            .sheet(item: $resultTx, onDismiss: { dismiss() }) { tx in
+                RecognitionResultCard(tx: tx, categories: categories)
+            }
+            // 转手动带原文（识别页输入原文预填备注，验收 6）。
+            .sheet(isPresented: $showingManualEntry) {
+                ManualEntryView(prefillNote: trimmed)
+            }
+            // 重试：alert 关闭动画结束后再触发识别，避免与 alert 消失争用 phase。
+            .onChange(of: retryToken) { _, _ in
+                recognize()
             }
         }
     }
@@ -169,11 +190,11 @@ struct TextRecognitionView: View {
         Task {
             do {
                 let store = LedgerStore(modelContext)
-                try await RecognitionEntry.recognizeAndSave(
+                let tx = try await RecognitionEntry.recognizeAndSave(
                     text: input, categories: categories,
                     parser: parser, store: store, now: Date())
                 phase = .idle
-                dismiss()                                                       // 本片：回记账页，最近记录 +1
+                resultTx = tx                                                   // 成功：弹结果卡片（复用 TransactionEditor.edit）
             } catch let error as RecognitionError {
                 phase = .failed(error)
             } catch {
@@ -215,6 +236,44 @@ struct TextRecognitionView: View {
         case .timeout:         return "请求超时，请重试。"
         case .noKey:           return "识别类记账要用到 DeepSeek，请先填入 API Key。"
         case .invalidResponse: return "返回内容无法解析，请重试。"
+        }
+    }
+}
+
+/// 识别成功结果卡片（原型 §4.3 openResultCard）：复用 `TransactionEditor(.edit)` 呈现已入账的 tx——
+/// 「完成」走 `makeUpdate` 回写、「删除这笔」= 撤销这笔入账。
+///
+/// 删除二次确认与 N01 `TransactionDetailView` 同构（`confirmationDialog` + 先 dismiss 再 delete，
+/// 规避 SwiftData 以已删对象重建 editor 的悬垂读取，见 memory）。折叠原文经 `rawText` 注入。
+/// tx 已入账故走 edit 语义（demo recognizeFlow 先 push bill 再 openResultCard，账单已存在）。
+private struct RecognitionResultCard: View {
+    let tx: Transaction
+    let categories: [LedgerCategory]
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingDeleteConfirm = false
+
+    private var store: LedgerStore { LedgerStore(modelContext) }
+
+    var body: some View {
+        TransactionEditor(
+            mode: .edit(tx),
+            categories: categories,
+            onSave: EditorActions.makeUpdate(store: store, tx: tx),   // 「完成」= 回写；不碰 source/rawText/cardTail
+            onDelete: { showingDeleteConfirm = true },                 // 「删除这笔」= 先二次确认
+            rawText: tx.rawText                                        // 折叠原文 = 入账时落的用户原文
+        )
+        .confirmationDialog("删除这笔账单？", isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                // 先 dismiss 再 delete：与 TransactionDetailView 同构，避免 sheet 以已删 tx 重建 editor（SwiftData 敏感）。
+                let performDelete = EditorActions.makeDelete(store: store, tx: tx)
+                dismiss()
+                performDelete()
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("删除后无法恢复")
         }
     }
 }

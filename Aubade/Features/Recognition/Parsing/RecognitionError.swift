@@ -12,4 +12,12 @@ enum RecognitionError: Error, Equatable {
     case timeout          // 超时
     case noAmount         // 解析不出有效金额
     case invalidResponse  // 非法响应（非 JSON / 缺字段 / HTTP 非 2xx）
+
+    /// 是否给「重试」入口：网络类失败重试有意义（TRD 03 §4）；noAmount/noKey 重试无益（原文/Key 不变结果不变），仅转手动/去配置。
+    var isRetryable: Bool {
+        switch self {
+        case .network, .timeout, .invalidResponse: return true
+        case .noAmount, .noKey:                     return false
+        }
+    }
 }

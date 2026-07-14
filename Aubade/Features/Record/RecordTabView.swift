@@ -22,13 +22,19 @@ struct RecordTabView: View {
     @State private var placeholderEntryTitle: String?   // 余两占位入口点击提示（非 nil 即弹）
     @State private var editingTransaction: Transaction?
 
-    /// 文本识别解析器注入：生产走 DeepSeekClient；DEBUG（模拟器/预览）走 mock 以便肉眼走通链路。
-    /// DEBUG 运行时切换 mock 成功/失败行为在切片 03。
+    #if DEBUG
+    // DEBUG 运行时 mock 行为：调试菜单写、此处读，切换识别成功/无金额/网络失败等（TRD 03 §5）。
+    @AppStorage(DebugMockSettings.behaviorKey) private var mockBehaviorRaw = MockTransactionParser.Behavior.success.rawValue
+    #endif
+
+    /// 文本识别解析器注入：生产走 DeepSeekClient；DEBUG（模拟器/预览）走 mock。
+    /// DEBUG 下 mock 行为由调试菜单经 @AppStorage 运行时切换（成功/无金额/网络失败/超时）。
     private var textParser: TransactionParsing {
         #if DEBUG
-        MockTransactionParser()
+        let behavior = MockTransactionParser.Behavior(rawValue: mockBehaviorRaw) ?? .success
+        return MockTransactionParser(behavior: behavior)
         #else
-        DeepSeekClient()
+        return DeepSeekClient()
         #endif
     }
 
