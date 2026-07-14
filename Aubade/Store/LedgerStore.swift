@@ -77,6 +77,17 @@ struct LedgerStore {
         return budget
     }
 
+    /// 设置/调整某周期唯一预算：删同 periodType 旧记录再插一条（写侧唯一化，对称 setBalanceBaseline）。
+    /// Budget 无时间戳、无法按时间取最新，故靠写侧收敛到"每周期至多一条"，读侧 @Query.first 即唯一值。
+    /// 全量 fetch 内存过滤而非 #Predicate：Budget 量极小（至多周+月两条），且规避 Predicate 对 String enum 的支持限制。
+    func setBudget(periodType: BudgetPeriodType, amount: Decimal) throws {
+        let existing = try fetch(Budget.self).filter { $0.periodType == periodType }
+        for budget in existing {
+            context.delete(budget)
+        }
+        try createBudget(periodType: periodType, amount: amount)
+    }
+
     // MARK: - BalanceBaseline
 
     @discardableResult

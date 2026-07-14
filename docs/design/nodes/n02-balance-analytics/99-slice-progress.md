@@ -1,51 +1,48 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/n02-balance-analytics/02-stats-aggregator-shell-trd.md`
-- 下一个 TRD：`docs/design/nodes/n02-balance-analytics/03-charts-breakdown-budget-trd.md`
-- 更新时间：2026-07-14T12:57:15+08:00
+- 最近完成 TRD：`docs/design/nodes/n02-balance-analytics/03-charts-breakdown-budget-trd.md`
+- 下一个 TRD：`全部完成`
+- 更新时间：2026-07-14T13:27:05+08:00
 
 ## 上一次 TRD 开发
 
-实现 M5 统计底座 + 骨架（切片02）：
-- 新增区间口径纯函数 `StatPeriod`：`make(grain:offset:now:calendar:)` 用 `Calendar.dateInterval(of:)` 算日/周/月/年四档半开区间 `[start,end)` + 导航标题/副标题（day"M月D日"+周X、week"M月D日 - M月D日"+本周/N周前、month/year 当前档带本月/今年）；`isAtOrAfterNow(offset)=offset>=0` 禁未来（TRD 权威口径，比 demo isFuture>0 更严，当前区间也禁 ›）。
-- 新增聚合纯函数 `StatisticsAggregator`（无状态、纯 Decimal）：`total`（复用 BalanceCalculator.sum + 半开过滤）、`expenseBreakdown`（降序/pct 四舍五入/总额0空数组/nil分类哨兵id成组/等额按id串稳定定序）、`expenseTrend`（year=12桶/month=当月天数/week&day=所在周7天，仅支出）、`budgetProgress`（over>100/near80~100/normal<80，防除零）+ `BudgetState` + `BreakdownRow(Identifiable)`。
-- 新增统计 Tab 骨架 `AnalyticsTabView`：`@Binding selection`（照抄 RecordTabView 范式，切片02 即定死供切片03 消费）+ 粒度分段切换（切换 offset 归零）+ 时间导航（› 到当前置灰禁未来）+ 合计卡（日档"当天支出/收入"文案）+ 日档流水（复用 LedgerRowView，点行 .sheet(item:) 进 TransactionDetailView）+ 周月年档占位区（切片03 填充）。
-- RootTabView：`AnalyticsPlaceholderView()` → `AnalyticsTabView(selection: $selectedTab)`，干净移除占位结构体，更新主框架注释。
-- 回填 02 TRD：`expenseBreakdown` 签名去掉 TRD 草案的 calendar 参数（实现不需要，仅按 period 日期过滤 + 按 id 分组），注明供切片03 按 2 参签名消费。
+实现 N02 切片 03（周月年档可视化，N02 最后一片）：
+- **支出趋势折线图** `ExpenseTrendChart`：Swift Charts（iOS16+ 原生，零第三方依赖）折线 + catmullRom 面积渐变 + 峰值 PointMark 高亮标注 + 峰值/均值副标题（均值除数含 0 桶，对齐 demo）；x 轴标签稀疏化（≤12 桶全显示，当月每日 28-31 桶抽首/中/尾）；本期无支出显示"本期还没有支出"占位。
+- **分类占比条形** `CategoryBreakdownView`：Capsule 宽度=pct%、色=CategoryStyle.color(name:direction:.expense)；点某行回调父视图弹下钻。
+- **下钻明细** `CategoryDetailSheet`：标题=分类名·区间标题；"共N笔·合计"合计由实时 transactions 求和（与列表同源，sheet 内改删后同步）；List 复用 LedgerRowView，点行进 TransactionDetailView 编辑。
+- **预算进度**（仅周/月档）：@Query budgets.first{periodType==目标} 读唯一预算；进度条 min(pct,100)%、over 标红"已超支！"、near 橙态、剩余 max(budget-spent,0)；未设预算跳 selection=.profile；年档不显示。
+- **setBudget 写侧唯一化** `LedgerStore.setBudget`：删同 periodType 再插（对称 setBalanceBaseline），全量 fetch+内存 filter 规避 #Predicate 对 String enum 限制。
+- **DebugMenu N02 调试 Section**：写月/周预算、清空预算、写初始总额（复用 setBalanceBaseline），支撑预算 UI 肉眼验收（正式设置界面在 N07）。
 
 ## 涉及文件和符号
 
-- `Aubade/Features/Analytics/StatPeriod.swift`（新增）：`StatGrain` 枚举 + `StatPeriod.make` / `.isAtOrAfterNow`
-- `Aubade/Features/Analytics/StatisticsAggregator.swift`（新增）：`total`/`expenseBreakdown`/`expenseTrend`/`budgetProgress` + `BudgetState` + `BreakdownRow`
-- `Aubade/Features/Analytics/AnalyticsTabView.swift`（新增）：`@Binding selection` + grainPicker/timeNav/totalsCards/dayList/chartsPlaceholder
-- `Aubade/Features/AppShell/RootTabView.swift`（改）：接线 AnalyticsTabView + 移除 AnalyticsPlaceholderView
-- `AubadeTests/StatPeriodTests.swift`（新增 9 单测）、`AubadeTests/StatisticsAggregatorTests.swift`（新增 11 单测）
-- `docs/design/nodes/n02-balance-analytics/02-stats-aggregator-shell-trd.md`（回填 expenseBreakdown 签名）
+- `Aubade/Store/LedgerStore.swift`（改）：新增 `setBudget(periodType:amount:)`
+- `Aubade/Features/Analytics/ExpenseTrendChart.swift`（新增）：Swift Charts 趋势图 + peak/average/axisLabel 稀疏化
+- `Aubade/Features/Analytics/CategoryBreakdownView.swift`（新增）：`CategoryBreakdownView`（占比条形）+ `CategoryDetailSheet`（下钻明细，合计实时求和）
+- `Aubade/Features/Analytics/AnalyticsTabView.swift`（改）：chartsPlaceholder → periodCharts（trendSection/breakdownSection/budgetSection）；加 @Query budgets、detailCategory sheet、trendSeries/breakdown/currentBudget/detailTransactions 计算属性
+- `Aubade/Debug/DebugMenuView.swift`（改）：N02 调试 Section + setBudget/setBaseline/clearBudgets 方法
+- `AubadeTests/ModelCRUDTests.swift`（改）：新增 `testSetBudgetUniquePerPeriod`（连写同周期 count==1、取最后值、周月并存）
 
 ## 验证情况
 
-- 单测：新增 20 例（StatPeriod 9 + StatisticsAggregator 11）全通过——四档半开边界/周一起/禁未来/合计按方向半开/占比降序pct空数组nil哨兵/趋势桶数跟随粒度仅支出/预算阈值79-80-100-101-137。
-- 全量回归：AubadeTests 78 例全通过（58 旧 + 20 新），0 失败，N00/N01 无回归。
-- 编译：build-for-testing BUILD SUCCEEDED（iOS 17 target，零参 onChange 可编译，无 import Charts）。
-- 模拟器：App 启动无崩溃（PID 存活），默认记账 Tab 正常渲染。**UI 局限**：环境无 idb/tap 工具，无法程序化点击切到统计 Tab 或经 DebugMenu 造数，统计 Tab 的交互（粒度切换/导航翻页/日档点击）未做肉眼验证；核心风险（区间/聚合纯函数）已由 20 单测全覆盖。
-- Jflow Review：1 轮 PASS，2 只读子 agent（正确性+TRD符合度 / 范围守纪+复用+无回归+前向兼容切片03）均无阻断。采纳 1 项（回填 TRD expenseBreakdown 签名去 calendar，避免切片03 照草案误传）。非阻断建议（inRange 可提公开供视图复用、趋势 label 铺满需切片03 绘图时稀疏化、补跨月周标题断言）留待切片03，未处理。
+- 编译：build-for-testing BUILD SUCCEEDED（iPhone 17 / iOS 26.5，含 import Charts）。
+- 单测：新增 1 例（setBudget 唯一化）；全量 79 例全通过（78 旧 + 1 新），0 失败，N00/N01/N02切片01-02 无回归。
+- Jflow Review：1 轮 PASS，2 只读子 agent（正确性+TRD符合度 / 范围守纪+复用+无回归+SwiftUI正确性）均无阻断。采纳 2 项两 agent 共同点名的非阻断修复：① 下钻合计由 row.amount 快照改为实时求和（触及验收 6 改删同步）；② 趋势 x 轴标签阈值 7→12（年档 12 月全显示对齐 demo）。修复后重新编译+全量测试再次全绿。
+- **UI 局限**：环境无 idb/tap 工具，无法程序化点击切统计 Tab / 经 DebugMenu 造数，趋势/占比/下钻/预算的视觉与手势未做肉眼验证；数值正确性由切片 02 的 20 聚合单测 + 本片 setBudget 单测覆盖。
 
 ## 遗留风险和注意事项
 
-- **统计 Tab UI 未肉眼验证**：环境缺 tap 工具，粒度/导航/日档交互仅靠单测覆盖数据正确性，视觉与手势需后续在真机/可交互模拟器补验。
-- `AnalyticsTabView.periodTransactions`（视图内半开过滤）与 `StatisticsAggregator.inRange`（private）是同一口径两处实现；口径一致无回归，可后续将 inRange 提为公开方法供视图复用消重。
-- `expenseTrend` 每桶产完整 "M/D" label；切片03 绘图需自行稀疏化 x 轴标签（对齐 demo trendSeries 非里程碑日给空串）。
-- `@Binding selection` 本片 body 内未读写（仅定死签名供切片03 跳我的 Tab），有意为之，非未用告警。
+- **统计可视化 UI 未肉眼验证**：趋势折线、占比条形、下钻 sheet、预算进度条的视觉呈现与点击手势需后续在真机/可交互模拟器补验（DEBUG 入口已备好造数按钮：写月预算1500/周预算800/初始总额12000/清空预算）。
+- 趋势峰值 `.annotation(position:.top)` 在峰值贴图顶时可能被 Chart 边界裁剪（纯视觉小问题，子 agent 观察点，未处理）。
+- `AnalyticsTabView.periodTransactions`（视图内半开过滤）与 `StatisticsAggregator.inRange`（private）仍是同口径两处实现；口径一致无回归，聚合不暴露"过滤后 tx 列表"故视图层自行过滤属可接受，长期须保持口径一致。
+- 同一 view 挂两个 .sheet(item:)（editingTransaction 日档 / detailCategory 周月年）；二者按 grain 互斥永不同时非 nil，iOS 17 安全。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n02-balance-analytics/03-charts-breakdown-budget-trd.md`。
-2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/n02-balance-analytics/03-charts-breakdown-budget-trd.md`，只实现该 TRD 切片。
+全部 TRD 已完成。下一次若继续，请从 PRD 验收标准和最终验证情况开始检查。
 
 补充说明：
-1. 读 `current.json.next_trd`，应为 `docs/design/nodes/n02-balance-analytics/03-charts-breakdown-budget-trd.md`（切片03，N02 最后一片）。
-2. 读该 TRD 同目录 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 切片03 内容：周月年档可视化——Swift Charts 趋势折线（import Charts，iOS17 原生）+ 条形分类占比 + 下钻明细 sheet（复用 LedgerRowView/TransactionDetailView）+ 预算进度（新增 LedgerStore.setBudget 写侧唯一化 + @Query budgets.first）+ DebugMenu 写预算/初始总额入口。消费切片02 已就绪的 expenseTrend/expenseBreakdown(2参)/budgetProgress/BreakdownRow(Identifiable)/@Binding selection，不回改切片02 签名。
-4. 分支：`feat/n02`（本节点已定，沿用，不再询问）。
-5. 切片03 是 N02 最后一片；完成后更新 DAG N02 节点状态，next_action 指向下一可开发节点的 PRD。
+- **N02 节点已全部完成**（切片 01/02/03 三片闭环）。本片是 N02 最后一片。
+- 下一步：更新 DAG `docs/design/aubade-v1-dev-dag.md` 中 N02 节点状态为完成；找到下一个可开发节点，next_action 指向生成该节点 PRD（jflow-start）。
+- 分支：`feat/n02`（本节点已用，提交沿用）。提交后按 DAG 推进下一节点。
+- 提交信息：`feat(n02): 实现切片03 周月年档可视化（趋势/占比/下钻/预算）+ setBudget 写侧唯一化`。
