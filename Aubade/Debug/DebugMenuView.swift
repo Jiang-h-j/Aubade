@@ -14,6 +14,12 @@ enum DebugVoiceMockSettings {
     static let behaviorKey = "debug.voiceMockBehavior"
 }
 
+/// DEBUG 截图 OCR mock 行为的持久化设置（N05 切片 02）：调试菜单写、RecordTabView 读。
+/// 与文本/语音 mock 各分开一个 key，三入口互不污染（PRD §6）。
+enum DebugScreenshotMockSettings {
+    static let behaviorKey = "debug.screenshotMockBehavior"
+}
+
 /// 临时验证入口（仅 DEBUG）：手动触发插入样例账单 / 列出预置分类 / 清库重置，
 /// 供真机或模拟器肉眼确认容器单点共享（PRD 验收 6）。Release 构建不含此入口。
 struct DebugMenuView: View {
@@ -27,6 +33,8 @@ struct DebugMenuView: View {
     @AppStorage(DebugMockSettings.behaviorKey) private var mockBehaviorRaw = MockTransactionParser.Behavior.success.rawValue
     // N04 语音 mock 行为选择（与 RecordTabView 共用同一 @AppStorage key）。
     @AppStorage(DebugVoiceMockSettings.behaviorKey) private var voiceMockRaw = MockVoiceTranscriber.Behavior.success.rawValue
+    // N05 截图 OCR mock 行为选择（与 RecordTabView 共用同一 @AppStorage key）。
+    @AppStorage(DebugScreenshotMockSettings.behaviorKey) private var screenshotMockRaw = MockTextRecognizer.Behavior.success.rawValue
 
     var body: some View {
         List {
@@ -94,6 +102,16 @@ struct DebugMenuView: View {
                     Text("麦克风被拒").tag(MockVoiceTranscriber.Behavior.microphoneDenied.rawValue)
                     Text("语音被拒").tag(MockVoiceTranscriber.Behavior.speechDenied.rawValue)
                     Text("本机不可用").tag(MockVoiceTranscriber.Behavior.onDeviceUnavailable.rawValue)
+                }
+            }
+
+            Section("N05 调试（截图 OCR mock）") {
+                Text("模拟器无真图片：切换行为，走通截图 → 入账 / 各降级路径（仍需在相册选一张图触发）")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Picker("mock OCR 结果", selection: $screenshotMockRaw) {
+                    Text("成功（星巴克 88.5）").tag(MockTextRecognizer.Behavior.success.rawValue)
+                    Text("空结果（没读出字）").tag(MockTextRecognizer.Behavior.empty.rawValue)
+                    Text("OCR 失败").tag(MockTextRecognizer.Behavior.failed.rawValue)
                 }
             }
         }
