@@ -1,50 +1,50 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/n04-voice-capture/02-speech-provider-permission-trd.md`
-- 下一个 TRD：`docs/design/nodes/n04-voice-capture/03-voice-panel-wiring-debug-trd.md`
-- 更新时间：2026-07-15T10:40:41+08:00
+- 最近完成 TRD：`docs/design/nodes/n04-voice-capture/03-voice-panel-wiring-debug-trd.md`
+- 下一个 TRD：`全部完成`
+- 更新时间：2026-07-15T12:56:41+08:00
 
 ## 上一次 TRD 开发
 
-N04 语音记账切片02「真实 SFSpeech 本机转文字 provider + 权限申请与降级 + Info.plist 用途说明」完成(纯系统集成层,零 UI,不接入口):
-- 新增 `SpeechVoiceTranscriber: VoiceTranscribing`——真实 `SFSpeechRecognizer(zh-CN)` + `AVAudioEngine`,`requiresOnDeviceRecognition=true` 且先 check `supportsOnDeviceRecognition`/`isAvailable`(隐私边界:本机不支持即抛 `.onDeviceUnavailable`,不回退云端),`shouldReportPartialResults=false`。
-- 权限封装进 `start()`:先语音识别(`SFSpeechRecognizer.requestAuthorization`)后麦克风(iOS17 单分支 `AVAudioApplication.requestRecordPermission`),notDetermined 弹系统窗、denied/restricted 直接抛对应 `VoiceTranscribeError`;仅进面板不调 start 故不弹权限。
-- 60s 上限:provider 内 `asyncAfter` 到点只 `stopAudioCapture()`(幂等停采音),不驱动 UI、不主动出文本;面板 60s 计时留切片03。
-- `finish()` 经 `waitForFinalTranscript`(continuation + 8s 超时兜底)取最终转写、trim 后空则抛 `.empty`;`finish()`/`cancel()` 都走 `stopAudioCapture()`(移 tap、停 engine、setActive(false))+ `cleanup()`(释放 task/request)。
-- pbxproj 两个 build config(Debug/Release)各新增 `INFOPLIST_KEY_NSMicrophoneUsageDescription`/`INFOPLIST_KEY_NSSpeechRecognitionUsageDescription`,文案声明"语音记账、本机识别、语音不离开设备"。
+N04 语音记账切片03「语音面板 UI + 状态机 + RecordTabView 🎤 接线 + 复用 N03 结果卡片 + DEBUG 语音 mock 开关」完成，N04 在模拟器(mock 注入)可完整验收：点🎤 → 语音面板 → 按住松手(mock=成功)→ 转场识别中 → 弹结果卡片(金额20/支出/分类"行"/来源语音/原文带 `[语音转文字]` 前缀)。
+
+- **语音面板 `VoiceCaptureView`(新增)**：`VoicePhase` 局部状态机(idle/recording/transcribing/failed)；`DragGesture(minimumDistance:0)` 实现"按住录音、松手结束"；面板侧 60s 计时到点触发等价 finish()；权限被拒/本机不可用/空结果/failed 四类降级文案，不崩溃；成功回调 `onRecognized` 把纯口语交回上层。
+- **`RecordTabView` 🎤 入口接线**：`:92` 占位改真入口——先复用 N03 无 Key 拦截(有 Key→呈现面板、无 Key→拦截 alert +「去填写」开 `KeySetupSheet`)；单一 `fullScreenCover(item: $voiceRoute)` + `enum VoiceRoute{panel/recognizing(spoken)}` 驱动"面板→复用识别页"同一 presentation 换 item(避开双 cover 时序竞态)；注入 `makeVoiceTranscriber()`(DEBUG `MockVoiceTranscriber` 读 @AppStorage、Release `SpeechVoiceTranscriber`)+ `voiceParser`(DEBUG 固定 `.voiceSample`、Release `DeepSeekClient`，与文本 mock 分开互不污染)；`voiceRawText` 拼 `[语音转文字]\n"口语"` 前缀。
+- **`TextRecognitionView` 扩展(向后兼容)**：新增 `presetText`/`source`/`rawTextOverride` 三个带默认值(nil/.text/nil)可选入参；`onAppear` 在 presetText 非 nil 时自动识别一次(`hasAutoRecognized` 防重入)；`recognize()` 直接读 `presetText ?? text` 并透传 source/rawText。默认值保证 N03 文本入口零回归。语音成功链路经此复用 N03 整套识别中→入账(source=.voice)→结果卡片/失败转手动，零改 `RecognitionResultCard`(仍 private)与失败分支。
+- **DEBUG 语音 mock 开关**：新增 `DebugVoiceMockSettings.behaviorKey`(与文本 mock 分开一个 key)+ `DebugMenuView` 新增「N04 调试(语音 mock)」Section Picker 五态(成功/空结果/麦克风被拒/语音被拒/本机不可用)，tag 对齐 `MockVoiceTranscriber.Behavior` rawValue。
 
 ## 涉及文件和符号
 
-新增:
-- `Aubade/Features/Recognition/Voice/SpeechVoiceTranscriber.swift`(`SpeechVoiceTranscriber` 满足 `VoiceTranscribing`,@MainActor)
+新增：
+- `Aubade/Features/Recognition/Voice/VoiceCaptureView.swift`(`VoiceCaptureView` + `VoicePhase`，@MainActor View)
 
-改动:
-- `Aubade.xcodeproj/project.pbxproj`(Debug :332-333、Release :361-362 两条 INFOPLIST_KEY UsageDescription)
-- `docs/design/nodes/n04-voice-capture/02-speech-provider-permission-trd.md`(同步 waitForFinalTranscript 超时 1.5s→8s 说明、补充重入与 tap 生命周期要点,消除文档与实现漂移)
+改动：
+- `Aubade/Features/Record/RecordTabView.swift`(顶层新增 `enum VoiceRoute`；state 新增 voiceRoute/showVoiceKeyBlockedAlert/showingVoiceKeySheet + DEBUG voiceMockRaw；🎤 入口 action；`makeVoiceTranscriber()`/`voiceParser`/`voiceRawText()`；单一 fullScreenCover(item:)；无 Key alert + KeySetupSheet)
+- `Aubade/Features/Recognition/TextRecognitionView.swift`(`TextRecognitionView` 加 presetText/source/rawTextOverride + hasAutoRecognized + onAppear 自动识别；recognize() 读 presetText ?? text、透传 source/rawTextOverride。`RecognitionEntry.recognizeAndSave` 签名未改——切片01已参数化)
+- `Aubade/Debug/DebugMenuView.swift`(新增 `enum DebugVoiceMockSettings` + voiceMockRaw @AppStorage + 语音 mock Picker Section)
 
-未改(守纪):切片01 的 `VoiceTranscribing`/`VoiceTranscribeError`/`MockVoiceTranscriber` 契约、`recognizeAndSave`、`LedgerStore.createTransaction`、`TextRecognitionView`/`RecognitionResultCard`、N01/N02/N03 既有行为。真实 provider 无生产代码调用方(切片03才在 Release 分支注入),对既有链路零影响。
+未改(守纪)：切片01/02 契约 `VoiceTranscribing`/`MockVoiceTranscriber`/`SpeechVoiceTranscriber` 零改动；`RecognitionResultCard` 仍 private 未动；N03 失败分支(alert/转手动/重试/识别中遮罩)零改；`LedgerStore`/`TransactionEditor`/`recognizeAndSave` 签名与 N01/N02/N03 既有行为不变；📷 截图入口保持占位(N05)；无 N07 权限统一收口。
 
 ## 验证情况
 
-- **编译**:iPhone 17 模拟器 `xcodebuild build`,首次通过;第1轮评审修复后重新编译仍 BUILD SUCCEEDED。`import Speech`/`AVFoundation` 通过,`SpeechVoiceTranscriber` 满足 `VoiceTranscribing`(@MainActor 一致)。
-- **隐私核对**:`requiresOnDeviceRecognition=true` 唯一,全文件无 `=false` 云端回退,无音频/文件上传。
-- **jflow-review**:2/3 轮 PASS。第1轮双只读子 agent 独立评审——①系统API/并发角度 FAIL,发现 3 项:removeTap 被 isRunning 错误守卫(起 engine 失败后 tap 残留、重试 installTap 崩溃)、start() 无重入守卫(重复调用重装 tap 崩溃+task 泄漏)、1.5s 超时对长录音误报 .empty;②守纪/PRD 角度 PASS(范围守纪、零影响、on-device 隐私边界、权限时机、60s、Info.plist 全达标),同样把 1.5s 超时列为切片03注入前必修头号项。已修复全部 3 项:removeTap 用 tapInstalled 标志与 isRunning 解耦、start() 开头 stopAudioCapture+cleanup 复位、超时 1.5s→8s、附带 tap 闭包捕获局部 request 常量消除数据竞争。修复后重新编译通过,第2轮人工复核三处修复落地、无遗漏,守 TRD 范围(保持 on-device 强制、partial=false),PASS 零阻断。
-- **未写脱环境单测**:真实 provider 依赖真机+真麦克风+系统授权(对齐 PRD 约定6/TRD:真机录音转文字为可选真机自测、不阻塞节点);其分支语义已由切片01 `MockVoiceTranscriber` 单测覆盖,切片03 用 mock 走 UI 全路径。
+- **编译**：iPhone 17 Pro 模拟器 `xcodebuild build` Debug，首次通过；第1轮评审修复后重新编译仍 BUILD SUCCEEDED(唯一 warning 为 AppIntents 元数据无害提示，与本片无关)。
+- **单测**：`xcodebuild test` 全绿(107 tests, 0 failures)，含切片01 `RecognitionEntryVoiceTests`(source=.voice/带前缀 rawText/向后兼容默认 .text)与 N03 `RecognitionEntryTests` 无回归；修复后重跑仍全绿。
+- **jflow-review**：2/3 轮 PASS(max 3)。第1轮双只读子 agent 独立评审——①守纪/N03不回归/验收覆盖角度 PASS(核心接缝守纪、RecognitionResultCard 仍 private、验收1-10全覆盖、provider 注入分离、无越界)；②并发/状态机角度 FAIL，确认 1 个真实阻断：`DragGesture.onChanged` 高频连触发下，start() 抛权限错使 phase=.failed 而手指仍按住时，原 `phase==.idle || isFailed` 守卫会反复放行 start()(每秒数十次抖 AVAudioSession)。主控裁决同源 agent 另一次运行误报的"finishRecording 守卫写反可重入"实为误报(外层 `guard phase==.recording`+同步置 .transcribing 已防重入)。已修复阻断1：引入 `isPressing` 按压闸门(一次物理按压只 start 一次，与 phase 正交)+ `didClose` 取消守卫(双指取消竞态)+ onDisappear 补 cancel Task(防60s Task 存活)，并删除失引用的 isFailed。第2轮只读子 agent 复核 PASS，逐点确认三处修复闭合、且"失败→松手→重按=新录音"回归路径通畅未卡死、isPressing 无死锁。
 
 ## 遗留风险和注意事项
 
-- **真机自测未做(可选,不阻塞)**:模拟器无麦克风,"真机首次按下依次弹语音+麦克风授权→说话→finish 返回文本→断网仍能本机转出→关权限抛 denied 不崩溃"这条真机链路尚未实跑,留待有真机时验;节点门禁走 mock 不受阻。
-- **超时 8s 是经验值**:长录音 endAudio 后 on-device 收敛时间因设备而异,8s 为覆盖接近60s录音的兜底;若真机自测发现极慢设备仍偶发 .empty,可再上调或改内部 partial 累积(需同步 TRD)。
-- **60s 双计时职责**:provider 侧计时只是"面板漏调也不会一直录"的兜底;切片03 必须实现面板自己的 60s 计时 + UI 呈现 + 到点触发等价 finish()。
-- **本 feature 首次提交前需确认分支**:current 分支 feat/n04;按 Jflow 规则首次提交前询问用户「直接提交当前分支还是新开 feature 分支」,尚未提交。
+- **真机自测未做(可选，不阻塞)**：模拟器无麦克风，走 mock 全路径；真机"按住→依次弹语音+麦克风授权→说话→finish 出文本→断网仍本机转出→关权限抛 denied 不崩溃"链路留有真机时验，节点门禁走 mock 不受阻。
+- **[非阻断] SpeechVoiceTranscriber.start() 权限后缺 cancel 检查**：切片02 provider 既有设计(非本片引入)——start() 在 await 权限后、installTap 前无 `Task.checkCancellation()`，理论上权限已授权的极小同步窗口内 close 与在途 start 竞争可能重起采音；触发条件苛刻(权限未决时系统 alert 模态挡住取消)。可留后续切片处理。
+- **[非阻断] 极端手势中断 isPressing 兜底**：onChanged 触发后 onEnded 未配对(系统级手势抢占且视图未销毁)理论上可致 isPressing 滞留；实践中 DragGesture 按住场景 onEnded 可靠触发、中断多伴随视图销毁(新实例复位)，当前实现已够用。
+- **DEBUG 语音 parser 恒成功**：voiceParser 固定 `.voiceSample` 恒成功，"语音转出文本→parse 失败(network/noAmount)→转手动/重试"这条 N03 复用分支在 DEBUG 语音 mock 下走不到；需 Release 真实 DeepSeek 或临时切 voiceParser mock 行为触发。属可接受(该失败分支已由 N03 文本入口验收)。
+- **无 Key alert 文案**：语音 alert message 用「语音记账要用到 DeepSeek…」而非 TRD §40 字面的「识别类记账…」，属本入口更贴切的合理措辞，非缺陷。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n04-voice-capture/03-voice-panel-wiring-debug-trd.md`。
-2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/n04-voice-capture/03-voice-panel-wiring-debug-trd.md`，只实现该 TRD 切片。
+全部 TRD 已完成。下一次若继续，请从 PRD 验收标准和最终验证情况开始检查。
 
 补充说明：
-- 文件:`docs/design/nodes/n04-voice-capture/03-*.md`(切片03,当前 TRD 目录下第三片)
-- TRD:N04 切片03「语音面板 UI + 状态机 + RecordTabView 🎤 接线 + 结果卡片复用 + DEBUG 语音 mock 开关」
-- 下一步动作:切片02 完成后 `next_trd` 应指向切片03。进入 `jflow-dev` 实现切片03——扩展 `TextRecognitionView` 加 presetText/rawTextOverride 复用结果卡片(而非提升 private 卡片可见性)、语音面板状态机(按住说话→识别中→结果/失败转手动带原文)、面板侧 60s 计时、`RecordTabView` 🎤 入口注入(Release 注入 `SpeechVoiceTranscriber`、DEBUG 可切 `MockVoiceTranscriber`)。切片03 Release 注入真实 provider 前,建议先真机自测切片02 的录音转文字链路。
+1. 读取 `current.json`：切片03 完成后 N04 三片全部完成，`next_trd` 应为空/N04 无后续切片。
+2. N04 是节点最后一个切片——需更新开发 DAG `docs/design/aubade-v1-dev-dag.md` 的 N04 节点状态为完成，并按 DAG 找下一个可开发节点(N04/N05 相互独立，N05 截图 OCR 可能是下一个)，把 `next_action` 指向生成该节点 PRD(走 jflow-start/jflow-trd)。
+3. 提交：本 feature 首次提交，current 分支 `feat/n04`——按 Jflow 规则首次提交前需询问用户「直接提交当前分支 feat/n04 还是新开 feature 分支」，用户明确后本 feature 后续沿用。commit 信息遵循 `type[scope]:`。
+4. 若要真机验收 N04：在真机跑"按住说话→授权→本机转文字→入账→结果卡片"，验证隐私边界(requiresOnDeviceRecognition、断网可转出)。

@@ -46,6 +46,10 @@ enum RecognitionEntry {
 struct TextRecognitionView: View {
     let parser: TransactionParsing        // 注入：生产 DeepSeekClient / 测试预览 Mock
     let categories: [LedgerCategory]      // RecordTabView 的 @Query 传入
+    // 以下三入参带默认值，N03 文本入口调用不受影响（验收 N03 不回归）；语音入口（切片 03）传入以复用整套识别中→结果卡片→失败态：
+    var presetText: String? = nil         // 非 nil：进入即填入并自动识别（语音转出的纯口语）
+    var source: TransactionSource = .text // 落库来源；语音传 .voice
+    var rawTextOverride: String? = nil    // 落库原文；语音传带 [语音转文字] 前缀的原文（与 parse 输入的纯口语分离）
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -57,6 +61,7 @@ struct TextRecognitionView: View {
     @State private var resultTx: Transaction?          // 识别成功入账后的账单 → 触发结果卡片
     @State private var showingManualEntry = false      // 失败转手动（带原文预填）
     @State private var retryToken = 0                  // 重试：alert 关闭后经 onChange 重新识别
+    @State private var hasAutoRecognized = false       // 语音预置文本仅自动识别一次，防 onAppear 多次触发
 
     private var trimmed: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -155,6 +160,14 @@ struct TextRecognitionView: View {
             .onChange(of: retryToken) { _, _ in
                 recognize()
             }
+            // 语音入口：进入即用预置的纯口语文本自动识别一次（复用识别中→入账→结果卡片全套）。
+            // hasAutoRecognized 防 onAppear 多次触发；文本入口 presetText=nil 不进此分支，行为不变。
+            .onAppear {
+                guard let preset = presetText, !hasAutoRecognized else { return }
+                hasAutoRecognized = true
+                text = preset
+                recognize()
+            }
         }
     }
 
@@ -183,7 +196,8 @@ struct TextRecognitionView: View {
     // MARK: - 识别动作
 
     private func recognize() {
-        let input = trimmed
+        // 语音预置文本时直接读 presetText（不依赖"写 text 后同步读"）；文本入口读 trimmed。
+        let input = (presetText ?? text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return }                                    // CTA 已 disable，纯防御
         guard KeychainStore.shared.isConfigured else {                          // 无 Key 拦截：不进 Task
             showKeyBlockedAlert = true
@@ -196,7 +210,8 @@ struct TextRecognitionView: View {
                 let store = LedgerStore(modelContext)
                 let tx = try await RecognitionEntry.recognizeAndSave(
                     text: input, categories: categories,
-                    parser: parser, store: store, now: Date())
+                    parser: parser, store: store, now: Date(),
+                    source: source, rawText: rawTextOverride)   // 语音传 .voice + 带前缀原文；默认 .text/nil 保 N03 不变
                 phase = .idle
                 resultTx = tx                                                   // 成功：弹结果卡片（复用 TransactionEditor.edit）
             } catch let error as RecognitionError {
