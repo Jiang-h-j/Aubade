@@ -154,7 +154,8 @@ final class SpeechVoiceTranscriber: VoiceTranscribing {
 - **强制本机、不外传**:`request.requiresOnDeviceRecognition = true` + 先 `supportsOnDeviceRecognition` guard(PRD 验收 8、已确认约定 1)。中文本机不支持 → `.onDeviceUnavailable`,**不设 `requiresOnDeviceRecognition=false` 回退云端**。
 - **权限顺序**:先语音识别再麦克风(任一 `notDetermined` 触发系统弹窗,`denied/restricted` 直接返回 false → `start()` 抛对应 error,不 `installTap`、不起 engine)。仅进面板不调 `start()`,故不弹权限(PRD 已确认约定 9)。
 - **60s 上限(职责切分)**:provider 内 `asyncAfter` 到点只 `stopAudioCapture()`(停采音,幂等),**不驱动 UI、不主动出文本**——provider 不持有 UI 回调。面板(切片 03)**另设自己的 60s 计时**,到点触发与"松手"等价的 `finish()` 流转取文本。两处计时几乎同时到点:provider 侧先停采音(防继续录音),面板侧 `finish()` 时 `stopAudioCapture()` 幂等再调无副作用,`finish()` 照常从已收敛的识别结果取文本。切片 03 需实现面板 60s 计时与 UI 呈现;provider 侧计时是"即使面板漏调也不会一直录"的兜底。
-- **`waitForFinalTranscript`**:`shouldReportPartialResults=false` 时最终 result 经 recognitionTask 回调一次;用 continuation 在 task 完成回调 resume,加 ~1.5s 超时兜底(超时读 `latestTranscript`),防回调不来时挂起。**具体用 continuation+超时,不引第三方**。
+- **`waitForFinalTranscript`**:`shouldReportPartialResults=false` 时最终 result 经 recognitionTask 回调一次(`isFinal`/error);用 continuation 在该完成回调 resume,加 **~8s** 超时兜底(超时读 `latestTranscript`),防回调不来时挂起。**超时须足够长以覆盖接近 60s 长录音 `endAudio()` 后 on-device 引擎数秒收敛**——过短(如 1.5s)会在 `isFinal` 到来前先超时、读到空文本误报 `.empty`。**具体用 continuation+超时,不引第三方**。
+- **重入与 tap 生命周期**:`start()` 开头先 `stopAudioCapture()`+`cleanup()` 复位(防未 finish/cancel 就重按导致 tap 重装崩溃/task 泄漏);`installTap` 后置 `tapInstalled=true`,`stopAudioCapture()` 里 `removeTap` **与 `isRunning` 解耦**、按 `tapInstalled` 无条件移除(起 engine 失败时 tap 已装而 engine 未跑,仍须移除,否则重试 `installTap` 崩溃)。
 - **生命周期**:`finish()`/`cancel()` 都经 `stopAudioCapture()`(移除 tap、停 engine、`setActive(false)`)+ `cleanup()`(释放 task/request),避免 audio session 泄漏与 tap 重复安装崩溃。
 - **`AVAudioSession` 归 `AVFoundation`**;`AVAudioApplication`(iOS17)亦在 `AVFoundation`,`import AVFoundation` 即可。
 
