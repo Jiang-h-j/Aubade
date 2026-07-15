@@ -8,6 +8,12 @@ enum DebugMockSettings {
     static let behaviorKey = "debug.mockBehavior"
 }
 
+/// DEBUG 语音转文字 mock 行为的持久化设置（N04 切片 03）：调试菜单写、RecordTabView 读。
+/// 与文本 mock 分开一个 key，两入口互不污染（PRD §6）。
+enum DebugVoiceMockSettings {
+    static let behaviorKey = "debug.voiceMockBehavior"
+}
+
 /// 临时验证入口（仅 DEBUG）：手动触发插入样例账单 / 列出预置分类 / 清库重置，
 /// 供真机或模拟器肉眼确认容器单点共享（PRD 验收 6）。Release 构建不含此入口。
 struct DebugMenuView: View {
@@ -19,6 +25,8 @@ struct DebugMenuView: View {
     @State private var lastMessage: String = ""
     // N03 mock 行为选择（与 RecordTabView 共用同一 @AppStorage key）。
     @AppStorage(DebugMockSettings.behaviorKey) private var mockBehaviorRaw = MockTransactionParser.Behavior.success.rawValue
+    // N04 语音 mock 行为选择（与 RecordTabView 共用同一 @AppStorage key）。
+    @AppStorage(DebugVoiceMockSettings.behaviorKey) private var voiceMockRaw = MockVoiceTranscriber.Behavior.success.rawValue
 
     var body: some View {
         List {
@@ -74,6 +82,18 @@ struct DebugMenuView: View {
                     Text("网络失败").tag(MockTransactionParser.Behavior.network.rawValue)
                     Text("超时").tag(MockTransactionParser.Behavior.timeout.rawValue)
                     Text("非法响应").tag(MockTransactionParser.Behavior.invalidResponse.rawValue)
+                }
+            }
+
+            Section("N04 调试（语音 mock）") {
+                Text("模拟器无真麦克风：切换行为，走通语音 → 入账 / 各降级路径")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Picker("mock 语音结果", selection: $voiceMockRaw) {
+                    Text("成功（打车花了 20 块）").tag(MockVoiceTranscriber.Behavior.success.rawValue)
+                    Text("空结果").tag(MockVoiceTranscriber.Behavior.empty.rawValue)
+                    Text("麦克风被拒").tag(MockVoiceTranscriber.Behavior.microphoneDenied.rawValue)
+                    Text("语音被拒").tag(MockVoiceTranscriber.Behavior.speechDenied.rawValue)
+                    Text("本机不可用").tag(MockVoiceTranscriber.Behavior.onDeviceUnavailable.rawValue)
                 }
             }
         }
