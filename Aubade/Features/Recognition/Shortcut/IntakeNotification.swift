@@ -20,21 +20,11 @@ protocol NotificationSending {
     func send(_ notification: IntakeNotification) async
 }
 
-/// 空实现：切片 01 的 App Intent perform() 占位注入，切片 02 前保证独立编译（不发任何通知）。
-struct NoOpNotifier: NotificationSending {
-    func send(_ notification: IntakeNotification) async {}
-}
-
-/// 失败原图临时留存抽象（本片仅协议 + no-op 默认，真实写盘 / 清理在切片 02）。
+/// 失败原图临时留存抽象。真实实现（写盘 / 清理）见切片 02 TemporaryImageStore。
 /// 成功入账不留存原图（imageRef 恒 nil，对齐 recognizeAndSave 不透传 imageRef）；仅失败分支调 save。
 /// @MainActor：同 NotificationSending，只在 BackgroundIntakeService 调用链内被调。
 @MainActor
 protocol FailedImageStoring {
-    /// 返回 imageRef（临时文件引用）；no-op 返回 nil。
+    /// 返回 imageRef（临时文件引用）；留存失败返回 nil。
     func save(_ imageData: Data) -> String?
-}
-
-/// 空实现：切片 01 占位注入，不写盘（返回 nil）。真实实现在切片 02。
-struct NoOpFailedImageStore: FailedImageStoring {
-    func save(_ imageData: Data) -> String? { nil }
 }

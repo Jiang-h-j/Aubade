@@ -22,9 +22,9 @@ struct RecordAubadeScreenshotIntent: AppIntent {
             parser: DeepSeekClient(),
             store: LedgerStore(context),
             categories: categories,
-            notifier: NoOpNotifier(),                 // TODO(切片02)：换 UNUserNotificationCenterNotifier()
+            notifier: UNUserNotificationCenterNotifier(),   // 真实本地通知（权限/被拒降级内部处理）
             now: { Date() },
-            imageStore: NoOpFailedImageStore())        // TODO(切片02)：换 TemporaryImageStore()
+            imageStore: TemporaryImageStore())              // 失败原图临时留存（供点通知补录）
         await service.intake(imageData: image.data)
         return .result()
     }

@@ -28,6 +28,13 @@ enum ScreenshotRoute: Identifiable {
     }
 }
 
+/// 失败通知深链补录的 sheet 载荷（N06 切片 02）：携带原文 + 原图引用，`sheet(item:)` 驱动。
+struct DeepLinkManualEntry: Identifiable {
+    let id = UUID()
+    let rawText: String?
+    let imageRef: String?
+}
+
 /// 记账 Tab 真实视图（原型 §4.2），替换切片 01 的 `RecordTabPlaceholder`。
 ///
 /// 组成：顶部「今日已记 N 笔」chip、四入口网格（仅手动可用，余三占位提示）、
@@ -35,6 +42,8 @@ enum ScreenshotRoute: Identifiable {
 struct RecordTabView: View {
     /// 跨 Tab 跳转能力：「全部 ›」切到账单 Tab。由 RootTabView 传入 selectedTab 绑定。
     @Binding var selection: AppTab
+    /// 通知点击深链意图（N06 切片 02）：RootTabView 消费 router 后下传；本视图承接后回置 nil 防重复。
+    @Binding var deepLink: DeepLinkIntent?
 
     @Environment(\.modelContext) private var modelContext
     // 今日已记按 createdAt=今天计数（PRD 已确认约定 3）；数据量小，取全部内存过滤，避免动态 predicate。
@@ -53,6 +62,10 @@ struct RecordTabView: View {
     @State private var screenshotRoute: ScreenshotRoute?      // 截图单一 fullScreenCover 驱动（说明卡 → 复用识别页）
     @State private var showScreenshotKeyBlockedAlert = false  // 截图入口无 Key 拦截（进说明卡前查 Key）
     @State private var showingScreenshotKeySheet = false      // 无 Key alert「去填写」→ 开 Key sheet
+    // 深链落点状态（N06 切片 02）：三类通知点击各自的呈现。
+    @State private var deepLinkResultTx: Transaction?         // 成功通知 → 独立结果 sheet（注 onDelete+rawText，不动最近记录 editSheet）
+    @State private var deepLinkManualEntry: DeepLinkManualEntry?  // 失败通知 → 手动补录带原文/原图
+    @State private var showingDeepLinkKeySheet = false        // 无 Key 通知 → Key 配置
 
     #if DEBUG
     // DEBUG 运行时 mock 行为：调试菜单写、此处读，切换识别成功/无金额/网络失败等（TRD 03 §5）。
@@ -130,6 +143,51 @@ struct RecordTabView: View {
         "[截图识别]\n\(ocrText)"
     }
 
+    /// 失败补录预填备注：把失败通知带回的 rawText（`[快捷指令]\n<OCR 文本>`）去掉首行前缀，只留 OCR 文本。
+    /// rawText 为 nil（OCR 本身失败无文本）→ 返回 nil，备注不预填。
+    static func prefillNote(fromRawText rawText: String?) -> String? {
+        guard let rawText else { return nil }
+        if rawText.hasPrefix("[快捷指令]\n") {
+            return String(rawText.dropFirst("[快捷指令]\n".count))
+        }
+        return rawText
+    }
+
+    /// 「演示」按钮：真跑一遍后台核心单元（复用切片 01 BackgroundIntakeService）——
+    /// 模拟器/没配快捷指令时，点一下亲眼看到"识别→入账→弹真通知→点通知跳落点"整条主链路（验收 1）。
+    /// 依赖注入集中在此（对齐 makeTextRecognizer/screenshotParser 已在此），说明卡只管"点了演示"。
+    /// DEBUG：OCR/解析走 mock（按调试菜单行为切成功/失败）；Release：走真实 Vision + DeepSeek（真图片由快捷指令传，演示传空图走失败分支）。
+    @MainActor
+    private func runBackgroundDemo() async {
+        let service = BackgroundIntakeService(
+            recognizer: makeTextRecognizer(),          // DEBUG=mock（按调试菜单）/ Release=Vision
+            parser: screenshotParser,                  // DEBUG=.screenshotSample 定值 / Release=DeepSeek
+            store: LedgerStore(modelContext),
+            categories: categories,
+            notifier: UNUserNotificationCenterNotifier(),   // 演示也弹真通知，可点击验证深链
+            now: { Date() },
+            imageStore: TemporaryImageStore())
+        // DEBUG OCR mock 不解码图片，传占位空 Data 即可；Release 演示无真图 → 走 OCR 失败分支（弹失败通知）。
+        await service.intake(imageData: Data())
+    }
+
+    /// 承接深链意图（通知点击）：成功→独立结果 sheet / 失败→补录带原文原图 / 无 Key→Key 配置。
+    /// 消费后回置绑定 nil，防重复触发（RootTabView onChange + task 双入口已保证同一意图只下传一次）。
+    private func consumeDeepLink(_ intent: DeepLinkIntent?) {
+        guard let intent else { return }
+        switch intent {
+        case .openTransaction(let id):
+            // 按 id 取回 tx；取不到（已被删）则静默忽略。
+            let all = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? []
+            deepLinkResultTx = all.first { $0.id == id }
+        case let .manualEntry(rawText, imageRef):
+            deepLinkManualEntry = DeepLinkManualEntry(rawText: rawText, imageRef: imageRef)
+        case .configureKey:
+            showingDeepLinkKeySheet = true
+        }
+        deepLink = nil
+    }
+
     /// 今日已记笔数：createdAt 落在今天。
     private var todayCount: Int {
         allTransactions.filter { Calendar.current.isDateInToday($0.createdAt) }.count
@@ -189,10 +247,11 @@ struct RecordTabView: View {
                 switch route {
                 case .intro:
                     // 说明卡内 PhotosPicker 免权限选图 → 本机 OCR → onRecognized 交出文本 → 切复用识别页。
-                    // 「演示」占位提示由说明卡内部自持（showDemoPlaceholder + .alert），因外层"敬请期待" alert
-                    // 会被本全屏卡盖住，故不走外层。
+                    // 「演示」按钮经 onDemo 真跑一遍后台链路（依赖注入集中在 RecordTabView.runBackgroundDemo）。
                     ScreenshotIntakeSheet(recognizer: makeTextRecognizer()) { ocrText in
                         screenshotRoute = .recognizing(ocrText: ocrText)   // OCR 出文本 → 切复用识别页
+                    } onDemo: {
+                        await runBackgroundDemo()
                     }
                 case .recognizing(let ocrText):
                     // 复用 N03 整套：预置 OCR 文本自动识别 → 识别中遮罩 → 入账(source=.screenshotAlbum) → 结果卡片/失败转手动。
@@ -226,6 +285,29 @@ struct RecordTabView: View {
                 Text("截图记账要用到 DeepSeek 解析识别出的文字。填入你的 API Key 即可，手动记账不受影响。")
             }
             .sheet(isPresented: $showingScreenshotKeySheet) {
+                KeySetupSheet()
+            }
+            // 深链承接（N06 切片 02）：RootTabView 把通知点击意图经 $deepLink 下传，此处分流到三类落点。
+            // onChange 覆盖"运行中收到点击"；首个 task 覆盖"冷启动订阅前已有值"（RootTabView 已按此双入口下传）。
+            .onChange(of: deepLink) { _, intent in
+                consumeDeepLink(intent)
+            }
+            .task {
+                consumeDeepLink(deepLink)
+            }
+            // 成功通知落点：独立结果 sheet（注入 onDelete+rawText，可改/删/看原文，验收 3）。
+            // 独立于最近记录的 editSheet，不给后者添删除/原文，守验收 10（不污染既有入口）。
+            .sheet(item: $deepLinkResultTx) { tx in
+                DeepLinkResultSheet(tx: tx, categories: categories)
+            }
+            // 失败通知落点：手动补录带原文（去 [快捷指令] 前缀预填备注）+ 原图（据 imageRef 取回展示）。
+            .sheet(item: $deepLinkManualEntry) { entry in
+                ManualEntryView(
+                    prefillNote: Self.prefillNote(fromRawText: entry.rawText),
+                    prefillImageRef: entry.imageRef)
+            }
+            // 无 Key 通知落点：开 Key 配置（复用 KeySetupSheet）。
+            .sheet(isPresented: $showingDeepLinkKeySheet) {
                 KeySetupSheet()
             }
         }
@@ -321,6 +403,44 @@ struct RecordTabView: View {
 }
 
 // MARK: - 子视图
+
+/// 成功通知深链结果卡片（N06 切片 02）：复用 `TransactionEditor(.edit)` 呈现已入账的截图快捷指令账单——
+/// 可改（makeUpdate 回写）/ 可删（二次确认 + makeDelete）/ 看原文（rawText 折叠区），满足验收 3。
+///
+/// 独立于 RecordTabView 最近记录的 editSheet：那处不注 onDelete/rawText，此处才注，避免给最近记录编辑
+/// 添出删除/原文（守验收 10 不污染既有入口）。删除二次确认与 RecognitionResultCard 同构
+/// （confirmationDialog + 先 dismiss 再 delete，规避 SwiftData 以已删对象重建 editor 的悬垂读取）。
+private struct DeepLinkResultSheet: View {
+    let tx: Transaction
+    let categories: [LedgerCategory]
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingDeleteConfirm = false
+
+    private var store: LedgerStore { LedgerStore(modelContext) }
+
+    var body: some View {
+        TransactionEditor(
+            mode: .edit(tx),
+            categories: categories,
+            onSave: EditorActions.makeUpdate(store: store, tx: tx),   // 「完成」= 回写；不碰 source/rawText/cardTail
+            onDelete: { showingDeleteConfirm = true },                 // 「删除这笔」= 先二次确认
+            rawText: tx.rawText                                        // 折叠原文 = 入账时落的带 [快捷指令] 前缀原文
+        )
+        .confirmationDialog("删除这笔账单？", isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                // 先 dismiss 再 delete：避免 sheet 以已删 tx 重建 editor（SwiftData 敏感，见 memory）。
+                let performDelete = EditorActions.makeDelete(store: store, tx: tx)
+                dismiss()
+                performDelete()
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("删除后无法恢复")
+        }
+    }
+}
 
 /// 四入口的方块按钮。
 private struct EntryButton: View {

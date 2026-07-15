@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 /// 编辑组件工作模式：新建草稿（保存走 createTransaction）或编辑既有（保存走 updateTransaction）。
 enum EditorMode {
@@ -23,6 +24,8 @@ struct TransactionEditor: View {
     var onDelete: (() -> Void)? = nil
     /// 识别原文（原型 §4.3 折叠原文展示区）。本片手动入口恒为 nil、不渲染，结构上为 N03~N06 识别结果卡片留位（PRD §6）。
     var rawText: String? = nil
+    /// 补录期临时原图（N06 切片 02 失败截图补录）。非 nil 时表单顶部展示缩略；默认 nil 不渲染，现有调用不受影响。
+    var attachmentImageData: Data? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft: TransactionDraft
@@ -36,12 +39,14 @@ struct TransactionEditor: View {
          onSave: @escaping (TransactionDraft) throws -> Void,
          onDelete: (() -> Void)? = nil,
          rawText: String? = nil,
-         initialNote: String? = nil) {
+         initialNote: String? = nil,
+         attachmentImageData: Data? = nil) {
         self.mode = mode
         self.categories = categories
         self.onSave = onSave
         self.onDelete = onDelete
         self.rawText = rawText
+        self.attachmentImageData = attachmentImageData
         _draft = State(initialValue: Self.makeInitialDraft(mode: mode, initialNote: initialNote))
     }
 
@@ -82,6 +87,7 @@ struct TransactionEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let attachmentImageData { attachmentSection(attachmentImageData) }
                 amountSection
                 directionSection
                 categorySection
@@ -170,6 +176,24 @@ struct TransactionEditor: View {
         Section("备注") {
             TextField("备注", text: $draft.note, axis: .vertical)
                 .lineLimit(1...3)
+        }
+    }
+
+    /// 补录期原图展示区（N06 切片 02）：失败截图深链补录时展示留存的原图缩略，供用户对照填写。
+    /// 解码失败给占位（v1 不做图库，仅临时对照用）。
+    private func attachmentSection(_ data: Data) -> some View {
+        Section("原截图") {
+            if let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Label("原图无法显示", systemImage: "photo")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
