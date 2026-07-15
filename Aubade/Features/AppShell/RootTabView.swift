@@ -14,10 +14,14 @@ enum AppTab: Hashable {
 /// 记账/账单/统计为真实视图；我的为正式占位（顶部剩余总额已接，完整设置 N07 才填）。
 struct RootTabView: View {
     @State private var selectedTab: AppTab = .record
+    // 深链意图来源（N06 切片 02）：通知点击 → AppDelegate 写 router.pending → 此处消费 → 切记账 Tab + 下传。
+    @Environment(DeepLinkRouter.self) private var router
+    // 待 RecordTabView 承接的深链意图；消费后由 RecordTabView 回置 nil（防重复触发）。
+    @State private var pendingDeepLink: DeepLinkIntent?
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            RecordTabView(selection: $selectedTab)
+            RecordTabView(selection: $selectedTab, deepLink: $pendingDeepLink)
                 .tag(AppTab.record)
                 .tabItem { Label("记账", systemImage: "pencil") }
 
@@ -33,6 +37,22 @@ struct RootTabView: View {
                 .tag(AppTab.profile)
                 .tabItem { Label("我的", systemImage: "person") }
         }
+        // 深链承接：切记账 Tab + 把意图交给 RecordTabView。收到后清 router.pending，避免重复。
+        .onChange(of: router.pending) { _, intent in
+            consumeDeepLink(intent)
+        }
+        // 冷启动/被杀态时序：通知点击可能在订阅前就写入 router.pending，.onChange 不对"初始已有值"触发，
+        // 故首个 task 也消费一次（消费后置 nil，与 onChange 分支同一路径，防双触发）。
+        .task {
+            consumeDeepLink(router.pending)
+        }
+    }
+
+    private func consumeDeepLink(_ intent: DeepLinkIntent?) {
+        guard let intent else { return }
+        selectedTab = .record
+        pendingDeepLink = intent
+        router.pending = nil
     }
 }
 
@@ -160,5 +180,6 @@ private struct InitialBalanceSheet: View {
 
 #Preview {
     RootTabView()
+        .environment(DeepLinkRouter())
         .modelContainer(PersistenceController.makeInMemoryContainer())
 }

@@ -10,11 +10,12 @@ struct ScreenshotIntakeSheet: View {
     // 不必照抄 N04 VoiceCaptureView 的 @State 持有（那是因 AVAudioSession 跨录音生命周期有状态）。
     let recognizer: any TextRecognizing
     let onRecognized: (String) -> Void      // OCR 出文本 → 上层切 .recognizing 复用识别页
+    let onDemo: () async -> Void            // 「演示」→ 上层真跑一遍后台链路（发真通知，N06 切片 02）
 
     @Environment(\.dismiss) private var dismiss
     @State private var pickedItem: PhotosPickerItem?
     @State private var ocrPhase: ScreenshotOCRPhase = .idle
-    @State private var showDemoPlaceholder = false
+    @State private var runningDemo = false          // 演示运行中：禁重复点击 + 遮罩
 
     var body: some View {
         NavigationStack {
@@ -22,10 +23,12 @@ struct ScreenshotIntakeSheet: View {
                 VStack(spacing: 20) {
                     introHero        // 快捷指令主入口讲解（app.js:270）
                     twoStepGuide     // 两步设置指引（app.js:273-274）
-                    // 「演示：模拟快捷指令截图」占位（app.js:276，后台链路属 N06）
-                    Button("▶︎ 演示：模拟收到一张快捷指令截图") { showDemoPlaceholder = true }
+                    // 「演示：模拟快捷指令截图」（app.js:276）→ 真跑后台链路（N06 切片 02）：
+                    // 点一下走 识别→入账→弹真通知，关卡回记账页后可点通知跳落点。
+                    Button("▶︎ 演示：模拟收到一张快捷指令截图") { runDemo() }
                         .buttonStyle(.bordered)
                         .frame(maxWidth: .infinity)
+                        .disabled(runningDemo || ocrPhase == .recognizing)
                     orDivider
                     // 「从相册选图」备选（app.js:278）= 本节点核心入口，PhotosPicker 免相册授权
                     PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
@@ -48,12 +51,9 @@ struct ScreenshotIntakeSheet: View {
                 }
             }
             .overlay { if ocrPhase == .recognizing { ocrRecognizingOverlay } }   // 本机读字中遮罩
+            .overlay { if runningDemo { demoRunningOverlay } }                    // 演示后台链路运行中遮罩
             .animation(.default, value: ocrPhase)
-            .alert("敬请期待", isPresented: $showDemoPlaceholder) {
-                Button("好", role: .cancel) { }
-            } message: {
-                Text("快捷指令截图后台入账将在后续版本提供。")
-            }
+            .animation(.default, value: runningDemo)
             // 空结果 / OCR 失败 → 对应提示，可重选（对齐 PRD §5 / 验收 5）。
             // 复位由 ocrFailedBinding 的 set（alert 关闭即 phase→idle）统一负责，「好」按钮不重复置位。
             .alert("这张图没能识别", isPresented: ocrFailedBinding) {
@@ -148,6 +148,39 @@ struct ScreenshotIntakeSheet: View {
         case .empty:  return "没从这张图读出文字，换一张或手动记。"
         case .failed: return "这张图没能识别，换一张或转手动填写。"
         }
+    }
+
+    // MARK: - 演示：真跑一遍后台链路（N06 切片 02）
+
+    /// 「演示」按钮：跑完后台核心单元（发真通知）→ 关说明卡回记账页，让通知横幅可见、点击可跳落点。
+    private func runDemo() {
+        guard !runningDemo else { return }
+        runningDemo = true
+        Task {
+            await onDemo()               // 上层 runBackgroundDemo：识别→入账→发真通知
+            runningDemo = false
+            dismiss()                    // 关说明卡：横幅在最顶层可见，点通知跳深链落点
+        }
+    }
+
+    private var demoRunningOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.4).ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(.white)
+                Text("正在模拟后台入账…")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("识别 → 记账 → 通知，稍候看通知横幅")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .padding(28)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .transition(.opacity)
     }
 
     // MARK: - 选图 → 取 Data → 本机 OCR → 成功回调 / 失败态

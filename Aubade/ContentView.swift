@@ -11,5 +11,6 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environment(DeepLinkRouter())
         .modelContainer(PersistenceController.makeInMemoryContainer())
 }
