@@ -6,7 +6,7 @@ import Foundation
 struct MockTransactionParser: TransactionParsing {
     /// String rawValue：供 DEBUG 调试菜单经 @AppStorage 持久化选择的 mock 行为（TRD 03 §5）。
     /// voiceSample 是语音场景专用定值（20/支出/"行"，对齐 demo data.js:45），与 success（256/京东）并存不替换。
-    enum Behavior: String, CaseIterable { case success, voiceSample, noAmount, network, timeout, invalidResponse }
+    enum Behavior: String, CaseIterable { case success, voiceSample, screenshotSample, noAmount, network, timeout, invalidResponse }
     var behavior: Behavior = .success
 
     /// 样例时间 "2026-07-10 15:22"（对齐 demo 定值）。用 DateComponents 构造避免 locale/解析器差异。
@@ -44,6 +44,16 @@ struct MockTransactionParser: TransactionParsing {
                 merchant: nil,
                 cardTail: nil,
                 categoryName: "行"
+            )
+        case .screenshotSample:
+            // 截图成功定值（对齐 demo data.js:43：金额 88.5 / 支出 / 分类"食" / 商户星巴克）；归一命中预置支出"食"。
+            return ParsedTransaction(
+                amountText: "88.50",
+                direction: .expense,
+                occurredAt: Self.sampleOccurredAt,
+                merchant: "星巴克",
+                cardTail: nil,
+                categoryName: "食"
             )
         }
     }

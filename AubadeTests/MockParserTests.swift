@@ -17,6 +17,18 @@ final class MockParserTests: XCTestCase {
         XCTAssertEqual(parsed.occurredAt, MockTransactionParser.sampleOccurredAt)
     }
 
+    // MARK: - 验证点 7：screenshotSample 定值对齐 demo（88.5/支出/星巴克/食）
+
+    func testScreenshotSampleReturnsSampleValues() async throws {
+        let parsed = try await MockTransactionParser(behavior: .screenshotSample).parse(text: "任意", categories: [])
+        XCTAssertEqual(parsed.amountText, "88.50")
+        XCTAssertEqual(parsed.direction, .expense)
+        XCTAssertEqual(parsed.merchant, "星巴克")
+        XCTAssertNil(parsed.cardTail)
+        XCTAssertEqual(parsed.categoryName, "食")
+        XCTAssertEqual(parsed.occurredAt, MockTransactionParser.sampleOccurredAt)
+    }
+
     // MARK: - 验证点 7：各失败行为抛对应错误
 
     func testFailureBehaviorsThrowMatchingErrors() async {
