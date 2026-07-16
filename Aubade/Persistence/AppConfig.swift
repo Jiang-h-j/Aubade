@@ -8,6 +8,13 @@ enum AppConfig {
     static let hasOnboardedKey = "config.hasOnboarded"
     static let hasOnboardedDefault = false
 
+    /// 非视图读引导完成标志：未设值返回默认 false（首次安装 = 未引导 = 进引导）。
+    /// 视图侧用 `@AppStorage(hasOnboardedKey)` 绑定分流；本函数把"是否进引导"的判据做成
+    /// 可单测的纯读取（默认参数 `.standard` 便于注入独立 suite 断言读写），SwiftUI body 分流难直测。
+    static func hasOnboarded(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: hasOnboardedKey) as? Bool ?? hasOnboardedDefault
+    }
+
     /// 截图后台入账通知总开关（切片 04 消费）。默认 true = 开。
     static let notificationsEnabledKey = "config.notificationsEnabled"
     static let notificationsEnabledDefault = true

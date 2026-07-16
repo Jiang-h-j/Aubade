@@ -1,44 +1,41 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`
-- 下一个 TRD：`docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`
-- 更新时间：2026-07-16T10:15:44+08:00
+- 最近完成 TRD：`docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`
+- 下一个 TRD：`docs/design/nodes/n07-settings-onboarding/04-notification-toggle-permission-trd.md`
+- 更新时间：2026-07-16T10:31:27+08:00
 
 ## 上一次 TRD 开发
 
-N07 切片 02「我的页预算设置 + DeepSeek Key 状态行 + 分类只读查看」实现完成。给「我的」页 List 补齐三块设置，全是纯新增 UI + 调既有能力、零签名改动：①预算设置——周/月预算填写与清空，调既有 `LedgerStore.setBudget`（写侧唯一化）/`delete`；②DeepSeek Key 状态行——读 `KeychainStore.isConfigured` 显示「已配置✓/去填写›」，点击开既有 `KeySetupSheet`；③分类一览——`@Query` 预置分类按方向分组只读展示。
+N07 切片 03「首次启动引导两步流程 + onboarding 完成标志 + 根路由分流」实现完成。全新安装第一次打开由 `ContentView` 按 `AppConfig.hasOnboarded` 分流进入两步引导：①录初始总额（可跳过，调既有 `setBalanceBaseline`）→ ②提示配 DeepSeek Key（可跳过，复用既有 `KeySetupSheet()`）→ `finish()` 置 `hasOnboarded=true`，`ContentView` body 重算切 `RootTabView`（默认落 `.record` 记账页）。红线守住：两步都能不输入任何内容空走完、`hasOnboarded=true` 全仓唯一在 `finish()` 置位（中途退出下次从头，无断点续引导）。分流挂 `ContentView` 内而非 `AubadeApp`，seed/purge/容器注入零改动。
 
 ## 涉及文件和符号
 
-- **改** `Aubade/Features/AppShell/RootTabView.swift`：
-  - `ProfilePlaceholderView` 加 `@Query budgets`、`@Query(isPreset==true, sort sortOrder) presetCategories`、`@State editingBudgetPeriod/showingKeySheet/keyConfigured`、`currentBudget(_:)` helper。
-  - 新增 `budgetSection`（周/月行 + 当前值 + chevron，点击开 sheet）、`keySection`（Key 状态行，绿勾/去填写切换）、`categorySection`（`categoryTags` 按 direction 分组，LazyVGrid + Capsule 只读标签，无任何点击/增删改入口）。
-  - List 组装顺序 `balance→budget→threshold→key→category→#if DEBUG`（与 TRD 一致）。
-  - 加两个 `.sheet`：预算 `.sheet(item: $editingBudgetPeriod)`（onSave 调 setBudget、onClear 删该周期 Budget）、Key `.sheet(isPresented:onDismiss:)`（关闭重读 isConfigured 刷新）；额外加 `.onAppear` 兜底跨路径刷新 keyConfigured。
-  - 新增 `private struct BudgetEditSheet`（照抄 InitialBalanceSheet 的 posix Decimal 校验范式，但预算须 > 0；带 periodType 语义标题 + 清空按钮 role .destructive）。
-  - 新增 `extension BudgetPeriodType: Identifiable`（`.sheet(item:)` 前提，rawValue 唯一，与 internal enum 访问级别对齐）。
-- **改** `AubadeTests/ModelCRUDTests.swift`：新增 `testClearBudgetOnlyRemovesTargetPeriod`（清空周预算→周删除、月预算 3000 存活，验证 onClear 单周期删除不误伤）。
+- **改** `Aubade/ContentView.swift`：加 `@AppStorage(AppConfig.hasOnboardedKey) hasOnboarded`，body 从「仅 `RootTabView()`」改为按标志分流 `RootTabView` / `OnboardingView`。
+- **改** `Aubade/Persistence/AppConfig.swift`：新增 `static func hasOnboarded(_ defaults: UserDefaults = .standard) -> Bool`（`object(forKey:) as? Bool ?? hasOnboardedDefault`，与 `overspendThreshold(_:)` 对称），把 View body 分流不可直测的判据收敛成可单测纯读取。
+- **新增** `Aubade/Features/Onboarding/OnboardingView.swift`：两步引导视图（`enum Step {.balance/.key}` + `@State step/balanceInput/showingKeySheet`）。步①照抄 `InitialBalanceSheet` 的 posix Decimal 校验（>=0，无 Double 中转）+「下一步」（有值落基线、无值也进）+「先跳过」ghost；步②「去填写」开 `.sheet{KeySetupSheet()}` +「开始记账」`finish()`。`store` 用 `LedgerStore(modelContext)` 注入 context（非链式容器，无悬垂陷阱）。视觉对齐原型 renderOnboard（🌅 + Aubade + 步进文案 + 内容区 + 主按钮 + ghost 跳过）。
+- **新增** `AubadeTests/OnboardingRoutingTests.swift`：3 个用例断言分流判据——默认 false（进引导）/ 置 true（进主界面）/ 跨读取保持不回退，注入独立 `UserDefaults(suiteName:)` + defer 清理，不污染 .standard。
 
 ## 验证情况
 
-- **编译**：全 target（生产 + 测试）`** TEST BUILD SUCCEEDED **`，纯新增 UI 零签名改动、编译即验证核心风险。
-- **测试**：`xcodebuild test-without-building -only-testing:AubadeTests/ModelCRUDTests` 6 个全绿（0 失败），含新增 `testClearBudgetOnlyRemovesTargetPeriod` + 回归 `testSetBudgetUniquePerPeriod`（唯一化）/`testBudgetCRUD`。预算唯一化与 Decimal 精度由既有 `testSetBudgetUniquePerPeriod`/`DecimalPrecisionTests` 覆盖，本片只补未覆盖的清空语义，不重复造轮子。
-- **jflow-review**：1/3 轮 PASS，零阻断。两只读子 agent 并行：①代码事实/正确性（8 项 CONFIRMED：setBudget/delete/isConfigured 调用签名全对、onDismiss 刷新链路成立、Identifiable 前提满足且唯一定义、读侧依赖写侧唯一化、清空 onClear 精确删目标周期、分类纯只读无入口、清空单测有效、store 用注入 modelContext 无悬垂 context 陷阱）；②TRD 范围/需求边界（修改点六项全落地、List 顺序一致、「不做什么」七条逐条未越界、验收 2/4/5 路径清晰、无过度设计）。采纳两条非阻断建议：删多余 `public var id` 修饰符（保持与 internal enum 一致）、加 `.onAppear` 兜底跨路径刷新 keyConfigured（修复「在 N03 识别流程配 Key 后切回我的页状态行不刷新」的真实跨 Tab 场景）；均已修复并重新编译通过。未采纳「LazyVGrid 换普通布局」（TRD 给定选项、agent 判定无害，换反增风险）。
+- **编译**：全 target（生产+测试）`** TEST BUILD SUCCEEDED **`（iPhone 17 模拟器）。folder-based 项目，新增文件自动纳入编译无需改 pbxproj。
+- **测试**：`xcodebuild test-without-building -only-testing:AubadeTests/OnboardingRoutingTests -only-testing:AubadeTests/StatisticsAggregatorTests` → 新增 3 个 + 回归 13 个（含切片 01 的 `testAppConfigOverspendThresholdFallbackAndClamp`）全绿，0 失败。
+- **jflow-review**：1/3 轮 PASS，零阻断。两只读子 agent 并行：①代码事实/正确性（9 项 CONFIRMED：注入 context 无 SIGTRAP 悬垂、`setBalanceBaseline`/`KeySetupSheet()` 签名精确匹配、posix Decimal 无 Double 中转、`@AppStorage` 同 key 分流重算成立、单测独立 suite 不污染、AubadeApp seed/purge/容器注入未破坏）；②TRD 范围/边界（负责 5 条全落地、修改点匹配、「不做什么」7 条逐条未越界、两条红线守住、无过度设计——步②双按钮并列比 TRD 设想的「sheet 关后动态变文案」更简，属避免过度设计）。两条非阻断建议见下。
 
 ## 遗留风险和注意事项
 
-- UI→统计页联动即时性（设预算后统计页进度条生效 = 验收 2）、Key 行 sheet 交互切换（验收 4）、分类标签实际渲染（验收 5）为真机/模拟器观察项，落库路径已由单测覆盖，UI 联动逻辑经子 agent 核对成立，建议真机跑一遍确认。
-- `keyConfigured` 为 `@State` 镜像，现由 `onDismiss`（我的页内即时）+ `onAppear`（跨 Tab 切回兜底）双重刷新覆盖；若未来 Key 配置改非 sheet 方式（如 push）需同步刷新逻辑。
-- 本片改动均在既有 track 文件（`RootTabView.swift`/`ModelCRUDTests.swift`），无新增未 track 文件，提交无需额外 `git add` 新文件。
+- 可观察项（真机/模拟器）：全新安装/清 `hasOnboarded` key → 首次进引导两步 → 落记账 Tab；重启不再进引导（验收 1）；录了初始总额的我的页/账单页显示该值、两步都跳过的剩余「未设置」（验收 1 后半）；跨重启保持（验收 8）。分流判据已由单测覆盖，UI 流程建议真机跑一遍确认。
+- 非阻断建议（未采纳，记此备查）：①步②按钮视觉权重可对调（「开始记账」用 prominent、「去填写」用 ghost）——TRD 未规定样式，当前实现不违规；②`AppConfig.hasOnboarded(_:)` 可补进 TRD 03「修改点」章节（TRD 验证点已点名要求此函数，属授权范围，纯文档自洽）。
+- 新增两个未 track 文件（`Aubade/Features/Onboarding/OnboardingView.swift`、`AubadeTests/OnboardingRoutingTests.swift`），提交需 `git add` 这两个新文件 + 两个改动文件。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`。
+1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n07-settings-onboarding/04-notification-toggle-permission-trd.md`。
 2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`，只实现该 TRD 切片。
+3. 打开 `docs/design/nodes/n07-settings-onboarding/04-notification-toggle-permission-trd.md`，只实现该 TRD 切片。
 
 补充说明：
-1. 读取 `current.json.next_trd`，应指向切片 03（首次启动引导：录初始总额→提示配置 Key 可跳过→落空账本记账页，消费 `AppConfig.hasOnboarded`）。
+1. 读取 `current.json.next_trd`，应指向切片 04 `docs/design/nodes/n07-settings-onboarding/04-notification-toggle-permission-trd.md`（N07 最后一个切片）。
 2. 读该 TRD 同目录 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 切片 01（AppConfig 地基，含 `hasOnboardedKey` 已定义待 03 消费）、切片 02（我的页三 Section）均已完成；切片 03 首次引导可直接消费 `AppConfig.hasOnboardedKey`（切片 01 已定义、零消费留给 03）与既有 `InitialBalanceSheet`/`KeySetupSheet`。
-4. 提交沿用 `feat/n07` 分支（切片 01 已确立，本 feature 不再重复询问分支）。
+3. 切片 04 主题：通知开关 gating（`UNUserNotificationCenterNotifier.send` 内读 `AppConfig.notificationsEnabled`，关则不发、入账不受影响，对 `BackgroundIntakeService`/`SpyNotifier` 单测零改动）+ 我的页通知开关 + 统一权限降级组件 `PermissionDenialNotice`（收敛 `VoiceCaptureView:232` 纯文本 + 加「去系统设置」入口，覆盖语音/麦克风/通知）+ 通知开关 gating 单测。依赖切片 01 的 `AppConfig.notificationsEnabledKey`（已定义待 04 消费）。
+4. 切片 04 是 N07 最后一片，完成后需更新 DAG 节点 N07 状态为已完成；N07 是 greenfield DAG 第八个（最后一个）节点，其后无下一节点，按 `config.json.main_branch`（当前 null，需询问）或仓库默认分支合并主线。
+5. 提交沿用 `feat/n07` 分支（本 feature 已确立，不再询问）。
