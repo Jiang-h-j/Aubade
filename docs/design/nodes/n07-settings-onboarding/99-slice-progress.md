@@ -1,40 +1,44 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/n07-settings-onboarding/01-config-center-budget-threshold-trd.md`
-- 下一个 TRD：`docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`
-- 更新时间：2026-07-16T09:41:34+08:00
+- 最近完成 TRD：`docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`
+- 下一个 TRD：`docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`
+- 更新时间：2026-07-16T10:15:44+08:00
 
 ## 上一次 TRD 开发
 
-N07 切片 01「生产配置中心 + 超支阈值可配」实现完成。立住两块地基:①集中生产配置 `AppConfig`(供后续三片共用);②统计页超支阈值从写死 80% 改为可配设置项(默认仍 80%,行为不变)。本节点唯一有编译波及的签名改动(`budgetProgress` 加 `nearThreshold` 入参)已一次性收口,全调用点同步无遗漏。
+N07 切片 02「我的页预算设置 + DeepSeek Key 状态行 + 分类只读查看」实现完成。给「我的」页 List 补齐三块设置，全是纯新增 UI + 调既有能力、零签名改动：①预算设置——周/月预算填写与清空，调既有 `LedgerStore.setBudget`（写侧唯一化）/`delete`；②DeepSeek Key 状态行——读 `KeychainStore.isConfigured` 显示「已配置✓/去填写›」，点击开既有 `KeySetupSheet`；③分类一览——`@Query` 预置分类按方向分组只读展示。
 
 ## 涉及文件和符号
 
-- **新增** `Aubade/Persistence/AppConfig.swift`:`enum AppConfig` 集中三项 UserDefaults key + 默认值(`hasOnboarded`/`notificationsEnabled` 本片只定义留 03/04,`overspendThreshold` 本片消费)+ `overspendThreshold(_:)` 读取兜底(`object(forKey:) as? Int ?? 80` 避开 integer 返 0 坑,夹到 50~100)。
-- **改** `StatisticsAggregator.swift`:`budgetProgress` 加 `nearThreshold: Int = AppConfig.overspendThresholdDefault` 入参,`pct >= 80` → `pct >= nearThreshold`;`BudgetState` 注释同步。保持无状态纯函数(阈值由调用方注入)。
-- **改** `AnalyticsTabView.swift`:加 `@AppStorage(AppConfig.overspendThresholdKey) overspendThreshold`;`budgetProgressView` 调用传 `nearThreshold: overspendThreshold`。
-- **改** `RootTabView.swift`:`ProfilePlaceholderView` 加 `@AppStorage overspendThreshold` + `thresholdSection`(Stepper 50~100 步进 5),插入 List(balanceSection 后、DEBUG 入口前)。
-- **改** `StatisticsAggregatorTests.swift`:新增 `testBudgetProgressRespectsNearThreshold`(80/50 两组边界)+ `testAppConfigOverspendThresholdFallbackAndClamp`(独立 UserDefaults suite,未设→80/30→50/120→100/65→65)。
+- **改** `Aubade/Features/AppShell/RootTabView.swift`：
+  - `ProfilePlaceholderView` 加 `@Query budgets`、`@Query(isPreset==true, sort sortOrder) presetCategories`、`@State editingBudgetPeriod/showingKeySheet/keyConfigured`、`currentBudget(_:)` helper。
+  - 新增 `budgetSection`（周/月行 + 当前值 + chevron，点击开 sheet）、`keySection`（Key 状态行，绿勾/去填写切换）、`categorySection`（`categoryTags` 按 direction 分组，LazyVGrid + Capsule 只读标签，无任何点击/增删改入口）。
+  - List 组装顺序 `balance→budget→threshold→key→category→#if DEBUG`（与 TRD 一致）。
+  - 加两个 `.sheet`：预算 `.sheet(item: $editingBudgetPeriod)`（onSave 调 setBudget、onClear 删该周期 Budget）、Key `.sheet(isPresented:onDismiss:)`（关闭重读 isConfigured 刷新）；额外加 `.onAppear` 兜底跨路径刷新 keyConfigured。
+  - 新增 `private struct BudgetEditSheet`（照抄 InitialBalanceSheet 的 posix Decimal 校验范式，但预算须 > 0；带 periodType 语义标题 + 清空按钮 role .destructive）。
+  - 新增 `extension BudgetPeriodType: Identifiable`（`.sheet(item:)` 前提，rawValue 唯一，与 internal enum 访问级别对齐）。
+- **改** `AubadeTests/ModelCRUDTests.swift`：新增 `testClearBudgetOnlyRemovesTargetPeriod`（清空周预算→周删除、月预算 3000 存活，验证 onClear 单周期删除不误伤）。
 
 ## 验证情况
 
-- **编译**:全 target(生产 + 测试)编译通过 —— 签名改造后全调用点同步无遗漏,编译即验证本片核心风险。
-- **测试**:`xcodebuild test -only-testing:AubadeTests/StatisticsAggregatorTests` 13 个全绿(0 失败),含新增 2 个 + 回归的 `testBudgetProgressThresholds`/`testBudgetProgressZeroBudgetGuard`(默认 80 行为不变)。
-- **jflow-review**:1/3 轮 PASS,零阻断。两只读子 agent 并行:①代码事实/签名同步(全仓 grep `budgetProgress` 无遗漏调用点、AppConfig 兜底边界正确、@AppStorage 双处同 key 同默认、纯函数保持、测试有效)CONFIRMED;②TRD 范围/需求边界(改动 = 修改点 5 项、逐条核对「不做什么」无越界、`hasOnboarded`/`notificationsEnabled` 零消费、验收点全覆盖、未改既有对外签名)CONFIRMED。
+- **编译**：全 target（生产 + 测试）`** TEST BUILD SUCCEEDED **`，纯新增 UI 零签名改动、编译即验证核心风险。
+- **测试**：`xcodebuild test-without-building -only-testing:AubadeTests/ModelCRUDTests` 6 个全绿（0 失败），含新增 `testClearBudgetOnlyRemovesTargetPeriod` + 回归 `testSetBudgetUniquePerPeriod`（唯一化）/`testBudgetCRUD`。预算唯一化与 Decimal 精度由既有 `testSetBudgetUniquePerPeriod`/`DecimalPrecisionTests` 覆盖，本片只补未覆盖的清空语义，不重复造轮子。
+- **jflow-review**：1/3 轮 PASS，零阻断。两只读子 agent 并行：①代码事实/正确性（8 项 CONFIRMED：setBudget/delete/isConfigured 调用签名全对、onDismiss 刷新链路成立、Identifiable 前提满足且唯一定义、读侧依赖写侧唯一化、清空 onClear 精确删目标周期、分类纯只读无入口、清空单测有效、store 用注入 modelContext 无悬垂 context 陷阱）；②TRD 范围/需求边界（修改点六项全落地、List 顺序一致、「不做什么」七条逐条未越界、验收 2/4/5 路径清晰、无过度设计）。采纳两条非阻断建议：删多余 `public var id` 修饰符（保持与 internal enum 一致）、加 `.onAppear` 兜底跨路径刷新 keyConfigured（修复「在 N03 识别流程配 Key 后切回我的页状态行不刷新」的真实跨 Tab 场景）；均已修复并重新编译通过。未采纳「LazyVGrid 换普通布局」（TRD 给定选项、agent 判定无害，换反增风险）。
 
 ## 遗留风险和注意事项
 
-- `overspendThreshold(_:)` 非视图读取入口本片仅测试消费,为切片 04 通知发送器预留(前瞻设计,子 agent 判定合理)。
-- 阈值联动为同进程 `@AppStorage` 共享 key,依赖 SwiftUI 对 UserDefaults 变更的重算;真机跨 Tab 即时性在切片 02/03 我的页真机联调时可顺带观察。
-- `AppConfig.swift` 为未 track 新文件,提交时需 `git add`。
+- UI→统计页联动即时性（设预算后统计页进度条生效 = 验收 2）、Key 行 sheet 交互切换（验收 4）、分类标签实际渲染（验收 5）为真机/模拟器观察项，落库路径已由单测覆盖，UI 联动逻辑经子 agent 核对成立，建议真机跑一遍确认。
+- `keyConfigured` 为 `@State` 镜像，现由 `onDismiss`（我的页内即时）+ `onAppear`（跨 Tab 切回兜底）双重刷新覆盖；若未来 Key 配置改非 sheet 方式（如 push）需同步刷新逻辑。
+- 本片改动均在既有 track 文件（`RootTabView.swift`/`ModelCRUDTests.swift`），无新增未 track 文件，提交无需额外 `git add` 新文件。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`。
+1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`。
 2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`，只实现该 TRD 切片。
+3. 打开 `docs/design/nodes/n07-settings-onboarding/03-onboarding-flow-trd.md`，只实现该 TRD 切片。
 
 补充说明：
-- 切片 01 已完成,下一步开发**切片 02**:`docs/design/nodes/n07-settings-onboarding/02-profile-budget-key-category-trd.md`(我的页预算设置 sheet + Key 状态行复用 `KeySetupSheet` + 分类只读查看,纯新增 UI 零签名改动)。
-- 恢复动作:读该 TRD + `99-slice-progress.md`,确认依赖切片 01 的 `AppConfig` 与金额输入范式已就位,按 jflow-dev 实现。
-- 提交前需向用户确认分支策略(本 feature 首次提交,`config.json.main_branch` 为 null、无既定约定):直接提交当前 `feat/n07` 分支,还是另开分支。
+1. 读取 `current.json.next_trd`，应指向切片 03（首次启动引导：录初始总额→提示配置 Key 可跳过→落空账本记账页，消费 `AppConfig.hasOnboarded`）。
+2. 读该 TRD 同目录 `99-slice-progress.md` 和 `.claude/jflow` handoff。
+3. 切片 01（AppConfig 地基，含 `hasOnboardedKey` 已定义待 03 消费）、切片 02（我的页三 Section）均已完成；切片 03 首次引导可直接消费 `AppConfig.hasOnboardedKey`（切片 01 已定义、零消费留给 03）与既有 `InitialBalanceSheet`/`KeySetupSheet`。
+4. 提交沿用 `feat/n07` 分支（切片 01 已确立，本 feature 不再重复询问分支）。

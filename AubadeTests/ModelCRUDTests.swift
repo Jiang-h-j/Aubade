@@ -113,4 +113,24 @@ final class ModelCRUDTests: XCTestCase {
         XCTAssertEqual(try store.fetch(Budget.self).count, 2, "周+月各一条并存")
         XCTAssertEqual(try store.fetch(Budget.self).filter { $0.periodType == .monthly }.count, 1)
     }
+
+    /// N07 切片 02：我的页「清空预算」= 删该 periodType 的 Budget，另一周期不受影响。
+    /// 对应 BudgetEditSheet.onClear（删单条），验证清空后该周期回到"未设预算"态、且不误删另一周期。
+    func testClearBudgetOnlyRemovesTargetPeriod() throws {
+        let store = makeStore()
+
+        try store.setBudget(periodType: .weekly, amount: 800)
+        try store.setBudget(periodType: .monthly, amount: 3000)
+
+        // 清空周预算：删 weekly 的 Budget（我的页 onClear 逐条 delete 同 periodType）。
+        for b in try store.fetch(Budget.self).filter({ $0.periodType == .weekly }) {
+            try store.delete(b)
+        }
+
+        XCTAssertTrue(try store.fetch(Budget.self).filter { $0.periodType == .weekly }.isEmpty,
+                      "清空后周预算无记录")
+        let monthly = try store.fetch(Budget.self).filter { $0.periodType == .monthly }
+        XCTAssertEqual(monthly.count, 1, "月预算不受清空周预算影响")
+        XCTAssertEqual(monthly.first?.amount, Decimal(3000))
+    }
 }
