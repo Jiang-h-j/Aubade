@@ -21,6 +21,11 @@ struct UNUserNotificationCenterNotifier: NotificationSending {
     }
 
     func send(_ notification: IntakeNotification) async {
+        // 通知总开关（N07 约定 6）：关则不发——入账已完成、不受影响（关的是通知、不是记账）。
+        // gating 加在发送前、发送器内：后台链路唯一真实发送点，最小改动；
+        // BackgroundIntakeService / 注入点 / SpyNotifier 全零改动。
+        guard Self.notificationsEnabled() else { return }
+
         let center = UNUserNotificationCenter.current()
         // 随首次发通知申请权限（后台入账成功/失败那一刻）；已决定则立即返回当前态。
         // 被拒 → 静默不发、不抛错：入账已完成，不崩溃、不误记（约定 9）。
@@ -32,6 +37,15 @@ struct UNUserNotificationCenterNotifier: NotificationSending {
             content: Self.makeContent(for: notification),
             trigger: nil)                                   // trigger nil = 立即
         try? await center.add(request)
+    }
+
+    /// 通知开关读取（脱 @AppStorage，供发送器非视图上下文读 + 单测注入独立 suite 断言）。
+    /// `nonisolated`：纯 UserDefaults 读取、线程安全，脱离本类型的 @MainActor 隔离，
+    /// 使单测可在同步 nonisolated 上下文直接断言（main-actor 的 send 内仍可正常调用）。
+    /// `object(forKey:) as? Bool ?? default`：未设值走默认 true——不用 `bool(forKey:)`
+    /// （后者未设返回 false，会让"没配过"退化成默认关）。与 AppConfig.overspendThreshold(_:) 同范式。
+    nonisolated static func notificationsEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: AppConfig.notificationsEnabledKey) as? Bool ?? AppConfig.notificationsEnabledDefault
     }
 
     /// 纯函数：IntakeNotification → 通知内容（title/body/userInfo）。脱 UNUserNotificationCenter，供单测断言。

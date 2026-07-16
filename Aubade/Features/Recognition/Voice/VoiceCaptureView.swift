@@ -113,7 +113,12 @@ struct VoiceCaptureView: View {
                 Text("正在转文字…")
                     .font(.headline)
             }
+        case .failed(.microphoneDenied), .failed(.speechDenied):
+            // 权限被拒收敛到统一降级组件（N07）：受影响功能 + 去系统设置 + 手动不受影响。
+            PermissionDenialNotice(permission: .microphoneOrSpeech)
+                .padding(.horizontal)
         case .failed(let err):
+            // 非权限错误（本机不可用 / 空结果 / 录音出错）保持原文案，不套用权限降级范式。
             Text(failedMessage(err))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

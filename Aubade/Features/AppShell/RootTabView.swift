@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 /// 底部四 Tab 标识。用可绑定 selection 而非无状态 TabView，为切片 03
 /// 「最近记录『全部 ›』跳账单 Tab」预留跨 Tab 跳转能力（本片即引入绑定）。
@@ -80,6 +81,12 @@ struct ProfilePlaceholderView: View {
     /// 超支提示阈值（N07 切片 01）：与统计页共享同一 UserDefaults key，改动后统计页即时重算。
     @AppStorage(AppConfig.overspendThresholdKey) private var overspendThreshold = AppConfig.overspendThresholdDefault
 
+    /// 截图入账通知总开关（N07 切片 04）：与后台发送器 `UNUserNotificationCenterNotifier.notificationsEnabled()`
+    /// 共享同一 key，关闭后台入账不再弹通知（账单仍正常记录）。
+    @AppStorage(AppConfig.notificationsEnabledKey) private var notificationsEnabled = AppConfig.notificationsEnabledDefault
+    // 系统级通知权限是否被拒（.task 异步查一次）：被拒时开关旁给"去系统设置"引导。
+    @State private var systemNotifDenied = false
+
     private var store: LedgerStore { LedgerStore(modelContext) }
 
     /// 当前某周期预算：写侧唯一化，first 即唯一值（同 AnalyticsTabView 读侧范式）。
@@ -102,6 +109,7 @@ struct ProfilePlaceholderView: View {
                 balanceSection
                 budgetSection
                 thresholdSection
+                notificationSection
                 keySection
                 categorySection
                 #if DEBUG
@@ -133,6 +141,11 @@ struct ProfilePlaceholderView: View {
             }
             // 兜底跨路径刷新：若在别处（如 N03 识别拦截流程）配过 Key，切回我的页时同步状态行。
             .onAppear { keyConfigured = KeychainStore.shared.isConfigured }
+            // 系统级通知权限态查一次：被拒 → 开关旁显示"去系统设置"引导（本身在 @MainActor 视图上下文，回写 @State 安全）。
+            .task {
+                let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+                systemNotifDenied = (status == .denied)
+            }
         }
     }
 
@@ -173,6 +186,29 @@ struct ProfilePlaceholderView: View {
             Text("预算提醒")
         } footer: {
             Text("支出达到预算的该比例时，统计页预算条转为「接近」提醒。默认 80%。")
+        }
+    }
+
+    // MARK: - 通知开关（截图入账）
+
+    /// 通知总开关 + 系统级被拒引导（N07 切片 04）。关的是通知不是记账：关闭后账单仍正常记录。
+    private var notificationSection: some View {
+        Section {
+            Toggle("截图入账通知", isOn: $notificationsEnabled)
+            if systemNotifDenied {
+                Button("通知权限被拒，去系统设置开启") { openSystemSettings() }
+                    .font(.footnote)
+            }
+        } header: {
+            Text("通知")
+        } footer: {
+            Text("关闭后，截图后台入账不再弹通知；账单仍会正常记录。")
+        }
+    }
+
+    private func openSystemSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
         }
     }
 
