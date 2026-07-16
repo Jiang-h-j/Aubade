@@ -146,13 +146,13 @@ function renderBills() {
             <div class="cat-badge" style="background:${hexA(c,.16)}">${catIcon(b.cat)}</div>
             <div class="bill-main">
               <div class="t1">${esc(b.merchant || b.note || catLabel(b.cat))}</div>
-              <div class="t2">${esc(b.time.slice(11))} · ${srcName(b)}${b.note && b.merchant ? ' · '+esc(b.note):''}</div>
+              <div class="t2">${esc(b.time.slice(11))} · ${srcName(b)}${b.dateUnknown?' · <span class="date-warn-inline">日期未识别</span>':''}${b.note && b.merchant ? ' · '+esc(b.note):''}</div>
             </div>
             <div class="bill-amt ${b.dir} tnum">${b.dir==='expense'?'-':'+'}${money(b.amount)}</div>
           </div>
         `);
-        item.onclick = () => openBillEdit(b.id);
-        card.appendChild(item);
+        // 账单页：左滑删除（与记账页最近记录同款）
+        card.appendChild(swipeRow(item, b.id));
       });
       page.appendChild(g);
     });
@@ -237,13 +237,13 @@ function renderAdd() {
           <div class="cat-badge" style="background:${hexA(c,.16)}">${catIcon(b.cat)}</div>
           <div class="bill-main">
             <div class="t1">${esc(b.merchant || b.note || catLabel(b.cat))}</div>
-            <div class="t2">${esc(b.time.slice(5,16))} · ${srcName(b)}</div>
+            <div class="t2">${esc(b.time.slice(5,16))} · ${srcName(b)}${b.dateUnknown?' · <span class="date-warn-inline">日期未识别</span>':''}</div>
           </div>
           <div class="bill-amt ${b.dir} tnum">${b.dir==='expense'?'-':'+'}${money(b.amount)}</div>
         </div>
       `);
-      item.onclick = () => openBillEdit(b.id);
-      card.appendChild(item);
+      // R3：最近记录支持左滑删除（复用账单页同款 swipeRow）
+      card.appendChild(swipeRow(item, b.id));
     });
     recentSec.appendChild(card);
   }
@@ -252,6 +252,8 @@ function renderAdd() {
   page.querySelectorAll('.add-card').forEach(c => c.onclick = () => startEntry(c.dataset.m));
   const seeAll = recentSec.querySelector('#see-all');
   if (seeAll) seeAll.onclick = () => { currentTab = 'bills'; render(); };
+  const swipeHint = recent.length ? el(`<div class="swipe-hint">← 左滑一条可删除</div>`) : null;
+  if (swipeHint) recentSec.appendChild(swipeHint);
   screen.appendChild(page);
 }
 
@@ -277,10 +279,15 @@ function openScreenshotSheet() {
     <button class="btn secondary" id="ss-demo">▶︎ 演示：模拟收到一张快捷指令截图</button>
     <div class="ss-or"><span>或</span></div>
     <button class="btn" id="ss-album">🖼 从相册选一张图识别</button>
+    <button class="btn ghost" id="ss-multi" style="margin-top:8px">🧾 演示：选一张含多笔的账单截图</button>
   `);
   sheet.querySelector('#ss-demo').onclick = () => { closeModal(); if (needKeyBlocked()) return; runShortcutIntake(); };
   sheet.querySelector('#ss-album').onclick = () => { closeModal(); if (needKeyBlocked()) return; recognizeFlow('screenshot', '正在识别截图…', '本地读取文字 → DeepSeek 解析'); };
+  sheet.querySelector('#ss-multi').onclick = () => { closeModal(); if (needKeyBlocked()) return; _forceMultiOnce = true; recognizeFlow('screenshot', '正在识别账单截图…', '本地读取文字 → DeepSeek 解析多笔'); };
 }
+
+// 让"演示多笔"入口临时把本次截图识别走多笔流（不改全局开关）
+let _forceMultiOnce = false;
 
 /* 模拟"快捷指令截图 → 后台入账 → 通知"：不切页面，只在顶部弹通知条 */
 function runShortcutIntake() {
@@ -358,8 +365,13 @@ function recognizeFlow(mode, title, sub) {
   `));
   setTimeout(() => {
     if (State.simFail) return recognizeFailed(mode);
+    // R5：截图入口且（开启"多笔"演示 或 本次由多笔入口触发）→ 走多笔结果流
+    if (mode === 'screenshot' && (State.simMulti || _forceMultiOnce)) { _forceMultiOnce = false; return recognizeMulti(); }
     const r = MOCK_RECOGNIZE[mode];
-    const bill = { id: id(), amount: r.amount, dir: r.dir, cat: r.cat, time: r.time, merchant: r.merchant, note: r.note, source: mode, raw: r.raw };
+    // R2：开启"识别不到日期"演示时，兜底到今天并标记 dateUnknown，让结果卡片高亮提示
+    const noDate = State.simNoDate;
+    const time = noDate ? (TODAY + ' 00:00') : r.time;
+    const bill = { id: id(), amount: r.amount, dir: r.dir, cat: r.cat, time, merchant: r.merchant, note: r.note, source: mode, raw: r.raw, dateUnknown: noDate };
     State.bills.push(bill);
     currentTab = 'bills';
     render();
@@ -372,6 +384,70 @@ function recognizeFailed(mode) {
   confirmDialog('没能识别出金额', '这段内容没能解析出有效金额。原始文本已保留，可以转为手动填写。',
     '转手动填写', () => { closeModal(); openManualForm({ note: raw.replace(/^\[[^\]]+\]\n?/, '') }); }, '取消',
     () => { currentTab='add'; render(); });
+}
+
+/* ---- R5 截图多笔：一张截图识别出多笔，逐条确认入账 ---- */
+function recognizeMulti() {
+  // 把 mock 多笔落成正式账单（识别即入账，与单笔一致），再弹多笔结果卡逐条确认/改/删
+  const raw = MOCK_MULTI_SHOT.raw;
+  const ids = MOCK_MULTI_SHOT.items.map(it => {
+    const b = { id: id(), amount: it.amount, dir: it.dir, cat: it.cat, time: it.time, merchant: it.merchant, note: it.note, source: 'screenshot', raw, dateUnknown: it.dateUnknown };
+    State.bills.push(b);
+    return b.id;
+  });
+  currentTab = 'bills';
+  render();
+  openMultiResultCard(ids);
+}
+
+function openMultiResultCard(billIds) {
+  let ids = billIds.slice();
+  const overlay = el(`<div class="overlay"></div>`);
+  const sheet = el(`<div class="sheet"><div class="grab"></div></div>`);
+  overlay.appendChild(sheet); modalRoot.appendChild(overlay);
+  overlay.onclick = e => { if (e.target === overlay) closeModal(); };
+
+  const draw = () => {
+    const bills = ids.map(i => State.bills.find(b => b.id === i)).filter(Boolean);
+    const total = bills.filter(b=>b.dir==='expense').reduce((s,b)=>s+b.amount,0);
+    sheet.innerHTML = `<div class="grab"></div>
+      <div class="sheet-head"><span class="ok">✓</span> 已识别 ${bills.length} 笔</div>
+      <div class="multi-sum">这张截图识别出 ${bills.length} 笔，已全部入账。逐条看一眼，可单独改 / 删。<span class="tnum">支出合计 ¥${money(total)}</span></div>
+      <div class="multi-list">
+        ${bills.map(b => `
+          <div class="multi-item" data-id="${b.id}">
+            <div class="cat-badge" style="background:${hexA(catColor(b.cat),.16)}">${catIcon(b.cat)}</div>
+            <div class="bill-main">
+              <div class="t1">${esc(b.merchant || catLabel(b.cat))}</div>
+              <div class="t2">${esc(b.time.slice(5,16))}${b.dateUnknown?' · <span class="date-warn-inline">日期未识别</span>':''}</div>
+            </div>
+            <div class="bill-amt ${b.dir} tnum">${b.dir==='expense'?'-':'+'}${money(b.amount)}</div>
+            <button class="multi-del" data-del="${b.id}" title="删除这笔">✕</button>
+          </div>`).join('')}
+      </div>
+      <div class="raw-fold" id="m-raw">▸ 查看识别到的原始文本<div class="body">${esc(MOCK_MULTI_SHOT.raw)}</div></div>
+      <button class="btn" id="m-done">完成（${bills.length} 笔已记）</button>`;
+
+    // 点某笔 → 单笔结果卡编辑（改完回来刷新列表）
+    sheet.querySelectorAll('.multi-item').forEach(row => row.onclick = e => {
+      if (e.target.closest('.multi-del')) return;
+      closeModal(); openResultCard(row.dataset.id, false);
+    });
+    // 单笔删除（二次确认），删到 0 笔自动关闭
+    sheet.querySelectorAll('.multi-del').forEach(btn => btn.onclick = () => {
+      const bid = btn.dataset.del;
+      confirmDialog('删除这笔？', '仅删除这一笔，其余识别结果保留。', '删除', () => {
+        State.bills = State.bills.filter(x => x.id !== bid);
+        ids = ids.filter(x => x !== bid);
+        closeModal(); render();
+        if (ids.length === 0) { toast('已删除'); return; }
+        openMultiResultCard(ids); toast('已删除这笔');
+      }, '取消', null, true);
+    });
+    const rawFold = sheet.querySelector('#m-raw'); if (rawFold) rawFold.onclick = () => rawFold.classList.toggle('open');
+    sheet.querySelector('#m-done').onclick = () => { closeModal(); render(); toast(`已记 ${bills.length} 笔`); };
+  };
+  draw();
 }
 
 /* ---- 结果卡片（识别后已入账，可当场改） ---- */
@@ -392,7 +468,11 @@ function openResultCard(billId, justAdded) {
         </div>
       </div>
       <div class="field"><label>分类</label><select id="r-cat">${catOpts(b.dir)}</select></div>
-      <div class="field"><label>时间</label><input type="text" id="r-time" value="${esc(b.time)}"></div>
+      <div class="field">
+        <label>时间${b.dateUnknown ? ' <span class="date-warn-tag">日期未识别</span>' : ''}</label>
+        <input type="text" id="r-time" value="${esc(b.time)}">
+        ${b.dateUnknown ? '<div class="field-hint warn">没从截图/文本里读到消费日期，已先按今天填，请确认或改成真实日期。</div>' : ''}
+      </div>
       <div class="field"><label>商户 / 对方</label><input type="text" id="r-mer" value="${esc(b.merchant)}"></div>
       <div class="field"><label>备注</label><input type="text" id="r-note" value="${esc(b.note)}"></div>
       ${b.raw ? `<div class="raw-fold" id="r-raw">▸ 查看识别到的原始文本<div class="body">${esc(b.raw)}</div></div>` : ''}
@@ -416,7 +496,9 @@ function openResultCard(billId, justAdded) {
   sheet.querySelector('#r-done').onclick = () => {
     b.amount = parseFloat(sheet.querySelector('#r-amt').value) || b.amount;
     b.cat = sheet.querySelector('#r-cat').value;
-    b.time = sheet.querySelector('#r-time').value;
+    const newTime = sheet.querySelector('#r-time').value;
+    if (b.dateUnknown && newTime !== b.time) b.dateUnknown = false; // 用户已确认/改过日期
+    b.time = newTime;
     b.merchant = sheet.querySelector('#r-mer').value;
     b.note = sheet.querySelector('#r-note').value;
     closeModal(); render(); toast('已保存');
@@ -429,6 +511,59 @@ function openResultCard(billId, justAdded) {
   };
 }
 function openBillEdit(billId) { openResultCard(billId, false); }
+
+/* ---- 侧滑删除包装（R3：记账页最近记录 / 账单页复用同款交互）----
+   把一个 bill-item 包进可左滑的容器：左滑露出「删除」→ 点删除走二次确认；
+   未滑动时点内容进编辑，已露出时点内容先收起。鼠标拖拽也可触发，贴近真机 swipeActions。 */
+const DEL_W = 76;
+function swipeRow(itemEl, billId, onAfterDelete) {
+  const wrap = el(`
+    <div class="swipe">
+      <div class="swipe-action"><button class="swipe-del">删除</button></div>
+      <div class="swipe-content"></div>
+    </div>
+  `);
+  const content = wrap.querySelector('.swipe-content');
+  content.appendChild(itemEl);
+
+  let open = false, startX = 0, dx = 0, dragging = false, moved = false;
+  const setX = x => { content.style.transform = `translateX(${x}px)`; };
+  const setOpen = v => { open = v; content.style.transition = 'transform .2s'; setX(v ? -DEL_W : 0); };
+
+  content.addEventListener('pointerdown', e => {
+    dragging = true; moved = false; startX = e.clientX; dx = 0;
+    content.style.transition = 'none';
+    content.setPointerCapture(e.pointerId);
+  });
+  content.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    dx = e.clientX - startX;
+    if (Math.abs(dx) > 4) moved = true;
+    let base = open ? -DEL_W : 0;
+    let x = Math.min(0, Math.max(-DEL_W, base + dx)); // 只允许左滑，夹在 [-DEL_W,0]
+    setX(x);
+  });
+  content.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    setOpen((open ? -DEL_W : 0) + dx < -DEL_W / 2); // 滑过一半吸附露出
+  });
+
+  itemEl.addEventListener('click', e => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); return; } // 拖拽结束的 click 不算点击
+    if (open) { setOpen(false); return; }
+    openBillEdit(billId);
+  }, true);
+
+  wrap.querySelector('.swipe-del').onclick = () => {
+    confirmDialog('删除这笔账单？', '删除后无法恢复，剩余总额与统计会同步更新。', '删除', () => {
+      State.bills = State.bills.filter(x => x.id !== billId);
+      closeModal(); render(); toast('已删除');
+      if (onAfterDelete) onAfterDelete();
+    }, '取消', null, true);
+  };
+  return wrap;
+}
 
 /* ---- 手动表单 ---- */
 function openManualForm(prefill = {}) {
@@ -688,13 +823,35 @@ function renderMine() {
   `);
   page.appendChild(keyCard);
 
-  page.appendChild(el(`<div class="group-label">分类（预置）</div>`));
-  page.appendChild(el(`
-    <div class="cat-tags">
-      ${CATS.expense.map(c=>`<span class="cat-tag">${c.icon} ${c.label}</span>`).join('')}
-      ${CATS.income.map(c=>`<span class="cat-tag">${c.icon} ${c.label}</span>`).join('')}
-    </div>
-  `));
+  page.appendChild(el(`<div class="group-label">分类管理</div>`));
+  const catCard = el(`<div class="list-card cat-manage"></div>`);
+  const renderCatManage = () => {
+    const rowHTML = (c, dir) => `
+      <div class="cat-mrow" data-dir="${dir}" data-key="${esc(c.key)}">
+        <span class="cat-badge sm" style="background:${hexA(c.color,.16)}">${c.icon}</span>
+        <span class="cat-mname">${esc(c.label)}</span>
+        ${c.isPreset
+          ? '<span class="cat-lock">预置 · 锁定</span>'
+          : '<span class="cat-edit">编辑 ›</span>'}
+      </div>`;
+    catCard.innerHTML = `
+      <div class="cat-mgroup-h">支出分类</div>
+      ${CATS.expense.map(c => rowHTML(c,'expense')).join('')}
+      <div class="cat-mgroup-h">收入分类</div>
+      ${CATS.income.map(c => rowHTML(c,'income')).join('')}
+      <div class="cat-mrow cat-add" id="cat-add">＋ 新增自定义分类</div>`;
+    catCard.querySelectorAll('.cat-mrow[data-key]').forEach(row => {
+      const dir = row.dataset.dir, key = row.dataset.key;
+      const c = CATS[dir].find(x => x.key === key);
+      row.onclick = () => {
+        if (c.isPreset) return toast('预置分类不可修改');
+        openCatEditor(dir, c, renderCatManage);
+      };
+    });
+    catCard.querySelector('#cat-add').onclick = () => openCatEditor(null, null, renderCatManage);
+  };
+  renderCatManage();
+  page.appendChild(catCard);
 
   page.querySelector('#edit-init').onclick = openInitEdit;
   bg.querySelector('#bw').onchange = e => { State.budgets.week = parseFloat(e.target.value)||0; toast('周预算已更新'); };
@@ -733,6 +890,60 @@ function openKeyEdit() {
   };
 }
 
+/* ---- R4 自定义分类编辑器（新增 / 编辑）----
+   cat=null 为新增；否则编辑（仅自定义分类进得来）。onSaved 用于就地刷新分类管理列表。 */
+function openCatEditor(dir, cat, onSaved) {
+  const editing = !!cat;
+  let d = dir || cat?.dir || 'expense';
+  let icon = cat?.icon || CAT_ICON_CHOICES[0];
+  let color = cat?.color || CAT_COLOR_CHOICES[0];
+  const sheet = buildSheet(editing ? '编辑分类' : '新增自定义分类', `
+    ${editing ? '' : `
+    <div class="field"><label>方向</label>
+      <div class="seg" id="ce-dir"><button data-d="expense" class="on">支出</button><button data-d="income">收入</button></div>
+    </div>`}
+    <div class="field"><label>名称</label><input type="text" id="ce-name" maxlength="6" value="${esc(cat?.label||'')}" placeholder="如 宠物、医疗、教育"></div>
+    <div class="field"><label>图标</label><div class="pick-grid" id="ce-icons">
+      ${CAT_ICON_CHOICES.map(ic => `<button class="pick ${ic===icon?'on':''}" data-ic="${ic}">${ic}</button>`).join('')}
+    </div></div>
+    <div class="field"><label>颜色</label><div class="pick-grid" id="ce-colors">
+      ${CAT_COLOR_CHOICES.map(co => `<button class="pick color ${co===color?'on':''}" data-co="${co}" style="background:${co}"></button>`).join('')}
+    </div></div>
+    <button class="btn" id="ce-save">${editing?'保存修改':'创建分类'}</button>
+    ${editing ? '<button class="btn ghost" id="ce-del" style="color:var(--warn)">删除这个分类</button>' : ''}
+  `);
+  const seg = sheet.querySelector('#ce-dir');
+  if (seg) seg.querySelectorAll('button').forEach(b => b.onclick = () => { d = b.dataset.d; seg.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.d===d)); });
+  sheet.querySelectorAll('#ce-icons .pick').forEach(b => b.onclick = () => { icon = b.dataset.ic; sheet.querySelectorAll('#ce-icons .pick').forEach(x=>x.classList.toggle('on',x.dataset.ic===icon)); });
+  sheet.querySelectorAll('#ce-colors .pick').forEach(b => b.onclick = () => { color = b.dataset.co; sheet.querySelectorAll('#ce-colors .pick').forEach(x=>x.classList.toggle('on',x.dataset.co===color)); });
+
+  sheet.querySelector('#ce-save').onclick = () => {
+    const name = sheet.querySelector('#ce-name').value.trim();
+    if (!name) return toast('请输入分类名称', true);
+    if (editing) {
+      updateCategory(d, cat.key, { label: name, icon, color });
+      toast('分类已更新');
+    } else {
+      const created = addCategory(d, name, icon, color);
+      if (!created) return toast('该方向已有同名分类', true);
+      toast('已新增分类「' + name + '」');
+    }
+    closeModal(); if (onSaved) onSaved();
+  };
+  const del = sheet.querySelector('#ce-del');
+  if (del) del.onclick = () => {
+    const used = categoryUsageCount(cat.key);
+    const msg = used > 0
+      ? `有 ${used} 笔账单用了这个分类，删除后这些账单会转到「其他」。确定删除？`
+      : '确定删除这个自定义分类？';
+    confirmDialog('删除分类', msg, '删除', () => {
+      if (used > 0) State.bills.forEach(b => { if (b.cat === cat.key) b.cat = '其他'; });
+      deleteCategory(d, cat.key);
+      closeModal(); render(); toast('分类已删除');
+    }, '取消', null, true);
+  };
+}
+
 /* ---------- 通用弹层 ---------- */
 function buildSheet(title, innerHTML) {
   const overlay = el(`<div class="overlay"></div>`);
@@ -761,10 +972,12 @@ function confirmDialog(title, msg, okText, onOk, cancelText, onCancel, danger) {
 }
 
 /* ---------- 演示控制台 ---------- */
-document.getElementById('btn-reset').onclick = () => { reset(); removeAllNotif(); document.getElementById('chk-fail').checked=false; document.getElementById('chk-nokey').checked=false; currentTab='add'; render(); toast('已重置演示数据'); };
-document.getElementById('btn-shortcut').onclick = () => { if (!State.onboarded) return toast('请先完成首次引导', true); if (needKeyBlocked()) return; runShortcutIntake(); };
+document.getElementById('btn-reset').onclick = () => { reset(); removeAllNotif(); ['chk-fail','chk-nokey','chk-multi','chk-nodate'].forEach(i=>{const c=document.getElementById(i);if(c)c.checked=false;}); currentTab='add'; render(); toast('已重置演示数据'); };
+document.getElementById('btn-shortcut').onclick = () => { if (!State.onboarded) return toast('请先完成首次引导', true); if (needKeyBlocked()) return; if (State.simMulti) { _forceMultiOnce = true; recognizeFlow('screenshot','正在识别账单截图…','本地读取文字 → DeepSeek 解析多笔'); return; } runShortcutIntake(); };
 document.getElementById('chk-fail').onchange = e => { State.simFail = e.target.checked; toast(e.target.checked?'已开启：识别将失败':'已关闭识别失败模拟'); };
 document.getElementById('chk-nokey').onchange = e => { State.simNoKey = e.target.checked; if(currentTab==='mine') render(); toast(e.target.checked?'已开启：模拟未配置 Key':'已关闭'); };
+document.getElementById('chk-multi').onchange = e => { State.simMulti = e.target.checked; toast(e.target.checked?'已开启：截图将识别多笔':'已关闭多笔模拟'); };
+document.getElementById('chk-nodate').onchange = e => { State.simNoDate = e.target.checked; toast(e.target.checked?'已开启：识别不到消费日期':'已关闭'); };
 
 /* ---------- 启动 ---------- */
 render();

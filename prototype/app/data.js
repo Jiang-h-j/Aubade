@@ -1,19 +1,52 @@
 /* ===== Aubade 原型 · 数据与状态（假数据，非真实持久化） ===== */
 
+// 分类：运行时可增删改（R4）。isPreset=true 为预置分类，不可删、不可改名（可否改图标/色待确认，原型默认锁全部字段）。
+// key 作为账单外键；自定义分类 key 用生成 id，避免与预置中文 key 冲突。
 const CATS = {
   expense: [
-    { key: '衣', label: '衣', icon: '👕', color: '#e8a0bf' },
-    { key: '食', label: '食', icon: '🍜', color: '#f0a868' },
-    { key: '住', label: '住', icon: '🏠', color: '#8fb8de' },
-    { key: '行', label: '行', icon: '🚗', color: '#7fc8a9' },
-    { key: '玩', label: '玩', icon: '🎮', color: '#b39ddb' },
-    { key: '其他', label: '其他', icon: '📦', color: '#b0b7c3' },
+    { key: '衣', label: '衣', icon: '👕', color: '#e8a0bf', isPreset: true },
+    { key: '食', label: '食', icon: '🍜', color: '#f0a868', isPreset: true },
+    { key: '住', label: '住', icon: '🏠', color: '#8fb8de', isPreset: true },
+    { key: '行', label: '行', icon: '🚗', color: '#7fc8a9', isPreset: true },
+    { key: '玩', label: '玩', icon: '🎮', color: '#b39ddb', isPreset: true },
+    { key: '其他', label: '其他', icon: '📦', color: '#b0b7c3', isPreset: true },
   ],
   income: [
-    { key: '工作', label: '工作', icon: '💼', color: '#6bbf8a' },
-    { key: '其他收入', label: '其他收入', icon: '🎁', color: '#9ccc9c' },
+    { key: '工作', label: '工作', icon: '💼', color: '#6bbf8a', isPreset: true },
+    { key: '其他收入', label: '其他收入', icon: '🎁', color: '#9ccc9c', isPreset: true },
   ],
 };
+
+// 自定义分类可选图标/颜色（新增/编辑时挑选）
+const CAT_ICON_CHOICES = ['🐾','🎓','💊','🎁','✈️','📚','🏋️','🎵','🍼','🐶','💄','🔧','🌱','☕️','🎨','🏦'];
+const CAT_COLOR_CHOICES = ['#e8785c','#f0a868','#e8a0bf','#b39ddb','#8fb8de','#7fc8a9','#6bbf8a','#c0a080'];
+
+function catId() { return 'c' + Math.random().toString(36).slice(2, 8); }
+
+// 新增自定义分类；重名（同方向）返回 null
+function addCategory(dir, label, icon, color) {
+  const name = (label || '').trim();
+  if (!name) return null;
+  if (CATS[dir].some(c => c.label === name)) return null;
+  const c = { key: catId(), label: name, icon: icon || '🏷', color: color || '#b0b7c3', isPreset: false };
+  CATS[dir].push(c);
+  return c;
+}
+// 编辑自定义分类（预置分类由 UI 拦截，这里防御性再挡一次）
+function updateCategory(dir, key, patch) {
+  const c = CATS[dir].find(x => x.key === key);
+  if (!c || c.isPreset) return false;
+  Object.assign(c, patch);
+  return true;
+}
+// 删除自定义分类；被账单引用时返回引用数，交给 UI 决定策略
+function categoryUsageCount(key) { return State.bills.filter(b => b.cat === key).length; }
+function deleteCategory(dir, key) {
+  const c = CATS[dir].find(x => x.key === key);
+  if (!c || c.isPreset) return false;
+  CATS[dir] = CATS[dir].filter(x => x.key !== key);
+  return true;
+}
 
 // 默认演示账单（重置时恢复到此）
 function seedBills() {
@@ -52,6 +85,17 @@ const MOCK_RECOGNIZE = {
 const MOCK_SHORTCUT_SHOT = { amount: 42.8, dir: 'expense', cat: '食', time: '2026-07-10 18:36', merchant: '瑞幸咖啡', note: '',
   raw: '[快捷指令截图 · 本地识别文字]\n微信支付\n瑞幸咖啡(国贸店)\n-42.80\n2026-07-10 18:36\n支付成功' };
 
+// R5 截图多笔：一张账单截图里识别出多笔消费。
+// 第 2 笔故意 dateUnknown=true（DeepSeek 未解析出日期），用于演示 R2 兜底提示与"日期未识别"高亮。
+const MOCK_MULTI_SHOT = {
+  raw: '[截图 · 本地识别文字]\n账单明细\n06-03 星巴克   ¥38.00\n盒马鲜生   ¥126.50\n06-03 滴滴出行 ¥24.00',
+  items: [
+    { amount: 38,    dir: 'expense', cat: '食', time: '2026-06-03 09:12', merchant: '星巴克',   note: '', dateUnknown: false },
+    { amount: 126.5, dir: 'expense', cat: '食', time: '2026-07-10 00:00', merchant: '盒马鲜生', note: '', dateUnknown: true  },
+    { amount: 24,    dir: 'expense', cat: '行', time: '2026-06-03 21:40', merchant: '滴滴出行', note: '', dateUnknown: false },
+  ],
+};
+
 const SAMPLE_TEXT = '【工商银行】您尾号1234的储蓄卡2026年07月10日15:22支出人民币256.00元，商户京东商城，余额12089.00元。';
 
 // 演示"今天"（真实 App 用系统日期；原型固定，保证翻页可预期）
@@ -71,6 +115,8 @@ const State = {
   // 演示开关
   simFail: false,
   simNoKey: false,
+  simMulti: false,     // R5：截图识别出多笔
+  simNoDate: false,    // R2：识别不到消费日期（单笔入口）
 };
 
 function id() { return 'b' + Math.random().toString(36).slice(2, 9); }
@@ -84,6 +130,11 @@ function reset() {
   State.bills = [];
   State.simFail = false;
   State.simNoKey = false;
+  State.simMulti = false;
+  State.simNoDate = false;
+  // 清掉运行时新增的自定义分类，恢复到纯预置
+  CATS.expense = CATS.expense.filter(c => c.isPreset);
+  CATS.income = CATS.income.filter(c => c.isPreset);
 }
 
 // ---- 计算 ----
