@@ -4,8 +4,8 @@ import SwiftData
 
 /// TRD 01 验证点 1~5：剩余金额派生纯函数 `BalanceCalculator` + 基线唯一写入 `LedgerStore.setBalanceBaseline`。
 ///
-/// 核心：无基线返回 nil、剩余公式 Decimal 无浮点误差、基线后边界 `>=`、写侧唯一化收敛到一条、
-/// 本月合计按方向求和。用固定 UTC calendar + firstWeekday=2 + 固定 now，避免 CI 时区/周首日漂移。
+/// 核心：无基线返回 nil、剩余公式 Decimal 无浮点误差、全量口径（不按 establishedAt 过滤，早于基线也计入）、
+/// 写侧唯一化收敛到一条、本月合计按方向求和。用固定 UTC calendar + firstWeekday=2 + 固定 now，避免 CI 时区/周首日漂移。
 @MainActor
 final class BalanceCalculatorTests: XCTestCase {
 
@@ -86,19 +86,31 @@ final class BalanceCalculatorTests: XCTestCase {
                        Decimal(string: "-35.25")!)
     }
 
-    // MARK: - 验证点 3：基线后边界 `>=`（同刻计入，早 1 秒不计，晚 1 秒计）
+    // MARK: - 验证点 3：全量口径（基线时刻附近三笔账——同刻/早 1 秒/晚 1 秒——都计入）
 
     func testBaselineBoundaryInclusive() throws {
         let established = date(2026, 7, 10, 12, 0, 0)
         let baseline = makeBaseline("1000", established)
         let txs = [
             try makeTx("100", .income, established),                          // 同刻 → 计入
-            try makeTx("50", .income, date(2026, 7, 10, 11, 59, 59)),         // 早 1 秒 → 不计
+            try makeTx("50", .income, date(2026, 7, 10, 11, 59, 59)),         // 早 1 秒 → 也计入（B01 全量口径）
             try makeTx("30", .income, date(2026, 7, 10, 12, 0, 1)),          // 晚 1 秒 → 计入
         ]
-        // 1000 + 100 + 30 = 1130（早 1 秒的 50 被排除）
+        // 1000 + 100 + 50 + 30 = 1180（早 1 秒的 50 现也计入，不再按基线先后过滤）
         XCTAssertEqual(BalanceCalculator.remaining(transactions: txs, baseline: baseline),
-                       Decimal(string: "1130")!)
+                       Decimal(string: "1180")!)
+    }
+
+    // 早于初始总额录入时刻的账仍计入剩余（B01 全量口径，验收 1、3）。
+    func testTransactionsBeforeBaselineIncluded() throws {
+        let established = date(2026, 7, 10, 12, 0, 0)
+        let baseline = makeBaseline("1000", established)
+        let txs = [
+            try makeTx("10", .expense, date(2026, 7, 9)),   // 早于基线的支出 → 旧口径会漏，新口径计入
+        ]
+        // 1000 − 10 = 990（旧"仅计基线后"口径会得 1000）
+        XCTAssertEqual(BalanceCalculator.remaining(transactions: txs, baseline: baseline),
+                       Decimal(string: "990")!)
     }
 
     // MARK: - 验证点 4：写侧唯一化，连续设置收敛到一条且为最新值

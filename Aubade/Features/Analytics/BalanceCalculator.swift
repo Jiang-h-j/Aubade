@@ -6,15 +6,14 @@ import Foundation
 /// （节点约束 2，对齐 `DecimalPrecisionTests`）。切片 02 的 `StatisticsAggregator` 同目录。
 enum BalanceCalculator {
 
-    /// 剩余 = initialAmount + Σ(基线后收入) − Σ(基线后支出)。
-    /// "基线后" = `occurredAt >= establishedAt`（PRD 已确认约定 2，同刻计入）。
+    /// 剩余 = initialAmount + Σ(全部收入) − Σ(全部支出)。对全部账单求和，
+    /// 不按 occurredAt 与 establishedAt 先后过滤——早于初始总额录入时刻的账也参与加减（B01 推翻 N02 约定 2）。
     /// baseline 为 nil 时返回 nil —— 视图显示"—"，引导用户先录初始总额。
     static func remaining(transactions: [Transaction], baseline: BalanceBaseline?) -> Decimal? {
         guard let baseline else { return nil }
-        let after = transactions.filter { $0.occurredAt >= baseline.establishedAt }
         return baseline.initialAmount
-            + sum(after, direction: .income)
-            - sum(after, direction: .expense)
+            + sum(transactions, direction: .income)
+            - sum(transactions, direction: .expense)
     }
 
     /// 按方向对账单金额求和（供剩余计算与汇总卡本月支出/收入复用）。纯 `Decimal`。
