@@ -17,6 +17,10 @@ struct AnalyticsTabView: View {
     /// 写侧 `LedgerStore.setBudget` 已按 periodType 唯一化，first 即该周期当前预算。
     @Query private var budgets: [Budget]
 
+    /// 超支提示阈值（N07 切片 01）：与我的页共享同一 UserDefaults key，我的页改阈值后
+    /// 本视图 body 即时重算 `budgetProgress`（切 Tab 回来即生效）。
+    @AppStorage(AppConfig.overspendThresholdKey) private var overspendThreshold = AppConfig.overspendThresholdDefault
+
     @State private var grain: StatGrain = .month   // demo 默认月档
     @State private var offset: Int = 0             // 相对当前的周期偏移（0=当前）
     @State private var editingTransaction: Transaction?
@@ -307,7 +311,8 @@ struct AnalyticsTabView: View {
     }
 
     private func budgetProgressView(budget: Decimal) -> some View {
-        let progress = StatisticsAggregator.budgetProgress(spent: expenseTotal, budget: budget)
+        let progress = StatisticsAggregator.budgetProgress(
+            spent: expenseTotal, budget: budget, nearThreshold: overspendThreshold)
         let isOver = progress.state == .over
         let barColor: Color = isOver ? .red : (progress.state == .near ? .orange : .accentColor)
         let remaining = max(budget - expenseTotal, 0)

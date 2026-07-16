@@ -68,6 +68,9 @@ struct ProfilePlaceholderView: View {
 
     @State private var showingInitSheet = false
 
+    /// 超支提示阈值（N07 切片 01）：与统计页共享同一 UserDefaults key，改动后统计页即时重算。
+    @AppStorage(AppConfig.overspendThresholdKey) private var overspendThreshold = AppConfig.overspendThresholdDefault
+
     private var store: LedgerStore { LedgerStore(modelContext) }
 
     /// 当前有效基线：取 establishedAt 最新一条（防御多条并存）。
@@ -83,6 +86,7 @@ struct ProfilePlaceholderView: View {
         NavigationStack {
             List {
                 balanceSection
+                thresholdSection
                 #if DEBUG
                 Section("开发者") {
                     NavigationLink {
@@ -118,6 +122,27 @@ struct ProfilePlaceholderView: View {
                 .padding(.top, 4)
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    /// 超支提示阈值（N07 切片 01）：Stepper 50~100 步进 5，整数百分比无键盘校验负担、范围天然受约束。
+    private var thresholdSection: some View {
+        Section {
+            Stepper(value: $overspendThreshold,
+                    in: AppConfig.overspendThresholdRange,
+                    step: AppConfig.overspendThresholdStep) {
+                HStack {
+                    Text("超支提示阈值")
+                    Spacer()
+                    Text("\(overspendThreshold)%")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            Text("预算提醒")
+        } footer: {
+            Text("支出达到预算的该比例时，统计页预算条转为「接近」提醒。默认 80%。")
         }
     }
 }

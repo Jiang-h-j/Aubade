@@ -1,9 +1,9 @@
 import Foundation
 
-/// 预算阈值状态（PRD 已确认约定 5 + 80% 接近态）。
+/// 预算阈值状态（PRD 已确认约定 5 + 可配接近态，默认 80%）。
 enum BudgetState {
-    case normal   // < 80%
-    case near     // 80% ~ 100%（含端点）
+    case normal   // < nearThreshold（默认 80%）
+    case near     // nearThreshold ~ 100%（含端点）
     case over     // > 100%
 }
 
@@ -111,14 +111,19 @@ enum StatisticsAggregator {
 
     // MARK: - 预算进度
 
-    /// 预算进度：`pct = round(spent/budget*100)`；over(>100%) / near(80~100%) / normal(<80%)。
+    /// 预算进度：`pct = round(spent/budget*100)`；over(>100%) / near(nearThreshold~100%) / normal(<nearThreshold)。
     /// budget <= 0 兜底为 (0, normal)，防除零（未设预算由调用方判 `@Query` nil，此处仅防脏数据）。
-    static func budgetProgress(spent: Decimal, budget: Decimal) -> (pct: Int, state: BudgetState) {
+    ///
+    /// `nearThreshold` 默认 `AppConfig.overspendThresholdDefault`（80）：保证既有不传参调用行为不变（回归安全）。
+    /// 阈值由调用方读 `AppConfig` 后传入，聚合器保持无状态纯函数、不触 UserDefaults（单测可直接传不同阈值）。
+    static func budgetProgress(spent: Decimal, budget: Decimal,
+                               nearThreshold: Int = AppConfig.overspendThresholdDefault)
+        -> (pct: Int, state: BudgetState) {
         guard budget > 0 else { return (0, .normal) }
         let pct = roundedPercent(spent, of: budget)
         let state: BudgetState
         if pct > 100 { state = .over }
-        else if pct >= 80 { state = .near }
+        else if pct >= nearThreshold { state = .near }
         else { state = .normal }
         return (pct, state)
     }

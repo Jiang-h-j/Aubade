@@ -199,4 +199,51 @@ final class StatisticsAggregatorTests: XCTestCase {
         XCTAssertEqual(r.pct, 0)
         XCTAssertEqual(r.state, .normal)
     }
+
+    // MARK: - 验证点：阈值驱动 near 判定（N07 切片 01，PRD 验收 9）
+
+    func testBudgetProgressRespectsNearThreshold() {
+        // nearThreshold: 80 → 等价现有默认行为（回归对照）。
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 79, budget: 100, nearThreshold: 80).state, .normal)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 80, budget: 100, nearThreshold: 80).state, .near)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 100, budget: 100, nearThreshold: 80).state, .near)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 101, budget: 100, nearThreshold: 80).state, .over)
+
+        // nearThreshold: 50 → 阈值真的驱动 .near 判定（50% 即接近，79% 仍接近）。
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 49, budget: 100, nearThreshold: 50).state, .normal)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 50, budget: 100, nearThreshold: 50).state, .near)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 100, budget: 100, nearThreshold: 50).state, .near)
+        XCTAssertEqual(StatisticsAggregator.budgetProgress(spent: 101, budget: 100, nearThreshold: 50).state, .over)
+
+        // pct 计算与阈值正交：Decimal 无浮点误差（137% 仍 over，与阈值无关）。
+        let over = StatisticsAggregator.budgetProgress(spent: Decimal(string: "2055")!,
+                                                       budget: Decimal(string: "1500")!,
+                                                       nearThreshold: 50)
+        XCTAssertEqual(over.pct, 137)
+        XCTAssertEqual(over.state, .over)
+    }
+
+    // MARK: - 验证点：AppConfig.overspendThreshold 读取兜底（N07 切片 01）
+
+    func testAppConfigOverspendThresholdFallbackAndClamp() throws {
+        let suite = "test.AppConfig.\(#function)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // 未设值 → 返回默认 80（而非 integer(forKey:) 的 0）。
+        XCTAssertEqual(AppConfig.overspendThreshold(defaults), 80)
+
+        // 越下界（30 < 50）→ 夹到下界 50。
+        defaults.set(30, forKey: AppConfig.overspendThresholdKey)
+        XCTAssertEqual(AppConfig.overspendThreshold(defaults), 50)
+
+        // 越上界（120 > 100）→ 夹到上界 100。
+        defaults.set(120, forKey: AppConfig.overspendThresholdKey)
+        XCTAssertEqual(AppConfig.overspendThreshold(defaults), 100)
+
+        // 界内（65）→ 原样返回。
+        defaults.set(65, forKey: AppConfig.overspendThresholdKey)
+        XCTAssertEqual(AppConfig.overspendThreshold(defaults), 65)
+    }
 }
