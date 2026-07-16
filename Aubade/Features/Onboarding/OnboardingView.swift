@@ -75,7 +75,7 @@ struct OnboardingView: View {
             VStack(spacing: 8) {
                 Text("你现在大约有多少钱？")
                     .font(.title3.weight(.semibold))
-                Text("所有账户加起来的合计，作为剩余金额的起点。之后每记一笔收支会自动加减。可以先跳过，稍后在「我的」里设置。")
+                Text("所有账户加起来的合计，作为剩余金额的起点。之后每记一笔收支会自动加减。填当前净值就好，别补录初始总额之前的旧账，否则会被重复扣减。可以先跳过，稍后在「我的」里设置。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

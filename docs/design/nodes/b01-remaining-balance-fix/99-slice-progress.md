@@ -1,35 +1,34 @@
 # TRD 切片进度
 
-- 最近完成 TRD：`docs/design/nodes/b01-remaining-balance-fix/01-balance-semantics-fix-trd.md`
-- 下一个 TRD：`docs/design/nodes/b01-remaining-balance-fix/02-double-deduction-notice-trd.md`
-- 更新时间：2026-07-16T19:53:49+08:00
+- 最近完成 TRD：`docs/design/nodes/b01-remaining-balance-fix/02-double-deduction-notice-trd.md`
+- 下一个 TRD：`全部完成`
+- 更新时间：2026-07-16T20:57:46+08:00
 
 ## 上一次 TRD 开发
 
-切片 01「剩余口径修复 + 单测同步」：推翻 N02 约定 2，`BalanceCalculator.remaining` 去掉 `occurredAt >= establishedAt` 日期过滤，改为对全部 transactions 按方向求和（initialAmount + Σ全部收入 − Σ全部支出）。同步单测断言与注释到新口径，补一条「早于基线仍计入」正向用例。覆盖 PRD 验收 1、2、3、6。
+切片 02「D7 双重扣减提示」：在两个"录初始总额"入口各加同一句 D7 提示——「填当前净值就好，别补录初始总额之前的旧账，否则会被重复扣减。」告知用户切片 01 全量口径下的双扣边界。纯文案规避，不做去重对账。覆盖 PRD 验收 4（提示可见），确认验收 5（未录基线分支）不受影响。
 
 ## 涉及文件和符号
 
-- `Aubade/Features/Analytics/BalanceCalculator.swift`：`remaining(transactions:baseline:)` 删过滤行、两处 `sum(after)`→`sum(transactions)`、改写 :9-11 注释为全量口径。`sum`/`guard let baseline`/签名/返回类型未动。
-- `AubadeTests/BalanceCalculatorTests.swift`：`testBaselineBoundaryInclusive` 断言 1130→1180 + MARK/行内注释更新；新增 `testTransactionsBeforeBaselineIncluded`（1000 − 早于基线10元支出 = 990）；类头 docstring :7 残留旧口径描述一并修正。其余现有用例未动。
+- `Aubade/Features/AppShell/RootTabView.swift`：`InitialBalanceSheet` 的 Form footer `Text`（:327）字符串追加 D7 提示句。parsedAmount/onSave/保存按钮 disable/onAppear 预填、private 可见性均未动。
+- `Aubade/Features/Onboarding/OnboardingView.swift`：`balanceStep` 说明副标题 `Text`（:78）字符串在"自动加减"后、"可以先跳过"前插入同一 D7 句。parsedAmount/setBalanceBaseline/下一步/先跳过按钮均未动。
 
 ## 验证情况
 
-- 聚焦单测（xcodebuild test，iPhone 17 模拟器）：首轮 22 个全绿（BalanceCalculatorTests 9 + StatisticsAggregatorTests 13，0 失败）；注释修正后重跑 BalanceCalculatorTests 9 个仍全绿。关键：testBaselineBoundaryInclusive=1180、新增 testTransactionsBeforeBaselineIncluded=990 通过，统计链路零回归。
-- jflow-review：第 1 轮 PASS，双子 agent 并行（正确性+红线 / TRD 契合度）均无阻断项。红线点（establishedAt 写入侧、挑最新基线、StatisticsAggregator）全部原样未动，单一职责纯净（仅改 2 个目标文件）。1 处非阻断注释残留已顺手修正。
+- 编译：`xcodebuild -scheme Aubade -destination 'iPhone 17 Simulator' build` → **BUILD SUCCEEDED**。folder-based 项目仅改字符串，不涉新增文件/pbxproj。
+- 无单测（TRD 明确纯 UI 文案，验证方式为目视）。
+- jflow-review：第 1 轮 PASS，只读 code-reviewer 子 agent 逐条核实——单一职责（仅 2 处 Text 字面量、零逻辑越界）、两处 D7 核心句一致、落点与语序符合 TRD、无过度设计、private 可见性未变、纯展示不阻塞录入。无阻断项。2 条非阻断建议（既有前置句式微差、"重复扣减"措辞偏机制）不影响推进。
 
 ## 遗留风险和注意事项
 
-- `Aubade.xcodeproj/project.pbxproj` 有一处与本节点无关的改动（objectVersion 77→71 降级 + 新增 DEVELOPMENT_TEAM），疑似旧版 Xcode 打开工程副作用。用户已拍板本次提交排除，保留在工作区待用户后续单独决定。切片 01 提交时勿夹带。
-- 验收 3（改历史日期仍计入）已由新增单测的底层机制覆盖，UI 层可观察验证留待整体收尾时目视。
+- 目视验证（我的页「调整初始总额」sheet footer、首次引导步①副标题）留待整体收尾时执行；代码层已确保为纯 Text 展示。
+- `Aubade.xcodeproj/project.pbxproj` 仍有一处与本节点无关的改动（objectVersion 降级 + DEVELOPMENT_TEAM），用户已拍板本次提交排除，勿夹带。
+- 提交分支：用户已明确「直接提交 main」，本切片沿用。
 
 ## 下一次开发
 
-1. 读取 `current.json.next_trd`，确认值仍为 `docs/design/nodes/b01-remaining-balance-fix/02-double-deduction-notice-trd.md`。
-2. 读取该 TRD 同目录的 `99-slice-progress.md` 和 `.claude/jflow` handoff。
-3. 打开 `docs/design/nodes/b01-remaining-balance-fix/02-double-deduction-notice-trd.md`，只实现该 TRD 切片。
+全部 TRD 已完成。下一次若继续，请从 PRD 验收标准和最终验证情况开始检查。
 
 补充说明：
-- 切片 01 已完成并通过评审，待 `complete-trd` 推进状态。
-- 下一步：进入切片 02 `docs/design/nodes/b01-remaining-balance-fix/02-double-deduction-notice-trd.md`（D7 双重扣减提示，纯 UI 文案）。两处落点：`RootTabView.swift` 的 `InitialBalanceSheet` footer（约 :327）+ `OnboardingView.swift` balanceStep 说明文案（约 :78）。纯目视验证、无单测。
-- 提交分支：用户已明确「直接提交 main」，切片 02 沿用不再询问。
+切片 02 是 b01-remaining-balance-fix 节点的最后一个 TRD（共 2 片，01+02 均已完成）。complete-trd 后 next_trd 应为空。
+下一步：提交推送（仅 RootTabView.swift + OnboardingView.swift 两个文件到 main，排除 pbxproj），然后更新 DAG 节点 B01 状态为完成，并按 `docs/design/batch01-feedback-fixes-dev-dag.md` 找下一个可开发节点，把 next_action 指向生成该节点 PRD。

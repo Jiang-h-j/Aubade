@@ -324,7 +324,7 @@ private struct InitialBalanceSheet: View {
                 } header: {
                     Text("你现在所有账户加起来大约有多少钱（元）")
                 } footer: {
-                    Text("之后每记一笔收支，剩余总额会自动加减。")
+                    Text("之后每记一笔收支，剩余总额会自动加减。填当前净值就好，别补录初始总额之前的旧账，否则会被重复扣减。")
                 }
             }
             .navigationTitle("设置初始总额")
