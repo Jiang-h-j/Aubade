@@ -56,6 +56,7 @@ struct RecordTabView: View {
     @State private var showingManualEntry = false
     @State private var showingTextRecognition = false   // 文本识别页（本片接通）
     @State private var editingTransaction: Transaction?
+    @State private var pendingDelete: Transaction?      // 最近记录左滑删除的二次确认目标（对齐账单页 pendingDelete）
     @State private var voiceRoute: VoiceRoute?          // 语音单一 fullScreenCover 驱动（面板 → 复用识别页）
     @State private var showVoiceKeyBlockedAlert = false // 语音入口无 Key 拦截（对齐 demo startEntry）
     @State private var showingVoiceKeySheet = false     // 无 Key alert「去填写」→ 开 Key sheet
@@ -197,6 +198,12 @@ struct RecordTabView: View {
         Array(recentTransactions.prefix(4))
     }
 
+    /// 最近记录单行固定高度：List 嵌在整页 ScrollView 内无法自适应内容高、会塌陷，需按「行数 × 单行高」定死高度。
+    /// 取值来源：右侧文字块 `.body`(≈22) + spacing 2 + `.caption`(≈16) ≈ 40，比左侧 emoji 圆 frame 36 高，取 40；
+    /// 加 `RecentTransactionRow` 上下 `.padding(.vertical, 10)` = 20，合计 60。subtitle `.lineLimit(1)` 保证单行。
+    /// 脆弱点：依赖「行恒为单行定高」，若日后行内容可换行或 Dynamic Type 大字号放大，固定高会裁切/留白，须改测量/动态算高方案。
+    private let recentRowHeight: CGFloat = 60
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -310,6 +317,15 @@ struct RecordTabView: View {
             .sheet(isPresented: $showingDeepLinkKeySheet) {
                 KeySetupSheet()
             }
+            // 最近记录左滑删除的二次确认（文案/结构照抄账单页 LedgerTabView:52-58）。
+            // 删除走页面级 confirmationDialog、不在 sheet 内触发，与账单页同构，无 SwiftData 悬垂风险。
+            .confirmationDialog("删除这笔账单？", isPresented: deleteConfirmBinding,
+                                titleVisibility: .visible, presenting: pendingDelete) { tx in
+                Button("删除", role: .destructive) { delete(tx) }
+                Button("取消", role: .cancel) { pendingDelete = nil }
+            } message: { _ in
+                Text("删除后无法恢复")
+            }
         }
     }
 
@@ -357,7 +373,10 @@ struct RecordTabView: View {
             if recentFour.isEmpty {
                 emptyRecent
             } else {
-                VStack(spacing: 0) {
+                // List（非手搓 VStack）才能挂原生 .swipeActions；但 List 自带滚动，直接塞进整页 ScrollView 会双滚动 +
+                // 高度塌陷。故 .scrollDisabled(true) 关掉 List 自身滚动交给外层 ScrollView，并用固定 .frame(height:) 撑开高度。
+                // .scrollContentBackground(.hidden) 消 List 默认背景，外层保留原圆角容器维持「卡片包一组行」观感。
+                List {
                     ForEach(recentFour) { tx in
                         Button {
                             editingTransaction = tx
@@ -365,12 +384,22 @@ struct RecordTabView: View {
                             RecentTransactionRow(tx: tx)
                         }
                         .buttonStyle(.plain)
-                        if tx.id != recentFour.last?.id {
-                            Divider()
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                pendingDelete = tx
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
                         }
                     }
                 }
-                .padding(.vertical, 4)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
+                .frame(height: CGFloat(recentFour.count) * recentRowHeight)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
             }
         }
@@ -393,12 +422,26 @@ struct RecordTabView: View {
 
     private func editSheet(for tx: Transaction) -> some View {
         let store = LedgerStore(modelContext)
-        // 落库逻辑走共享 EditorActions，与切片 03 列表进编辑单一来源。本片不注入 onDelete（删除在切片 03）。
+        // 落库逻辑走共享 EditorActions，与账单页列表进编辑单一来源。编辑 sheet 不注 onDelete：
+        // 删除走最近记录行的左滑（swipeActions + 页面级 confirmationDialog），不在编辑 sheet 内触发。
         return TransactionEditor(
             mode: .edit(tx),
             categories: categories,
             onSave: EditorActions.makeUpdate(store: store, tx: tx)
         )
+    }
+
+    // MARK: - 最近记录删除（照抄账单页 LedgerTabView，走共享 EditorActions.makeDelete）
+
+    /// confirmationDialog 的 Bool 绑定：pendingDelete 非 nil 即弹；关闭时清空。
+    private var deleteConfirmBinding: Binding<Bool> {
+        Binding(get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } })
+    }
+
+    private func delete(_ tx: Transaction) {
+        EditorActions.makeDelete(store: LedgerStore(modelContext), tx: tx)()
+        pendingDelete = nil
     }
 }
 
