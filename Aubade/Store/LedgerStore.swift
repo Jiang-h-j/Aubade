@@ -41,6 +41,47 @@ struct LedgerStore {
                   sortBy: [SortDescriptor(\.sortOrder)])
     }
 
+    /// 改自定义分类的名称/图标/颜色。预置拒改；同方向重名（排除自身）拒绝。方向不可改（签名不含 direction）。
+    /// 判重用全量 fetch 内存过滤，对齐 setBudget 范式，规避 #Predicate 对 enum/复合条件的支持限制。
+    func updateCategory(_ category: LedgerCategory, name: String,
+                        icon: String?, color: String?) throws {
+        guard !category.isPreset else { throw CategoryError.presetImmutable }
+        let duplicate = try fetch(LedgerCategory.self).contains {
+            $0.direction == category.direction && $0.name == name && $0.id != category.id
+        }
+        guard !duplicate else { throw CategoryError.duplicateName }
+        category.name = name
+        category.icon = icon
+        category.color = color
+        try context.save()
+    }
+
+    /// 删自定义分类。预置拒删；删前把该分类的账单逐笔按方向转兜底分类（支出"其他"/收入"其他收入"）再删，
+    /// 保证账单不因删分类而丢失分类——这与泛型 delete(_:) 的 .nullify 路径有意并存。
+    /// 兜底分类口径与 RecognitionNormalizer.category 同一常量。兜底缺失（异常态，预置被删光）则不阻塞删除，
+    /// 账单走 .nullify 置 nil。改 tx.category 与 delete(category) 在同一 save() 前完成，一次落库。
+    func deleteCategory(_ category: LedgerCategory) throws {
+        guard !category.isPreset else { throw CategoryError.presetUndeletable }
+        if !category.transactions.isEmpty {
+            let fallbackName = (category.direction == .expense) ? "其他" : "其他收入"
+            // 排除 category 自身：createCategory 不判重，用户可建出名为"其他"的自定义分类，
+            // 删它时兜底不能选中它自己，否则账单会被转到即将删除的分类、随后 nullify 丢分类。
+            let fallback = try fetch(LedgerCategory.self).first {
+                $0.name == fallbackName && $0.direction == category.direction && $0.id != category.id
+            }
+            if let fallback {
+                // 快照后遍历：改 tx.category 会经反向关系从 category.transactions 移除该元素，
+                // 直接遍历原集合会在迭代中改动集合。
+                let snapshot = category.transactions
+                for tx in snapshot {
+                    tx.category = fallback
+                }
+            }
+        }
+        context.delete(category)
+        try context.save()
+    }
+
     // MARK: - Transaction
 
     /// 创建账单。内部填 createdAt=updatedAt=当前值；occurredAt 由写入方传入。
@@ -121,4 +162,11 @@ struct LedgerStore {
         context.delete(model)
         try context.save()
     }
+}
+
+/// 分类写操作的领域错误。只做类型区分，文案由 UI 层决定（对齐 RecognitionError 风格）。
+enum CategoryError: Error {
+    case presetImmutable    // 预置分类不可改
+    case presetUndeletable  // 预置分类不可删
+    case duplicateName      // 同方向已存在同名分类
 }
