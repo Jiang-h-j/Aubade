@@ -67,11 +67,14 @@ struct ProfilePlaceholderView: View {
     @Query private var baselines: [BalanceBaseline]
     @Query private var allTransactions: [Transaction]
     @Query private var budgets: [Budget]
-    // 预置分类只读展示：isPreset==true，按 sortOrder 升序（与 LedgerStore.presetCategories 同序）。
-    @Query(filter: #Predicate<LedgerCategory> { $0.isPreset == true },
-           sort: \LedgerCategory.sortOrder) private var presetCategories: [LedgerCategory]
+    // 分类管理（切片 03）：取全部分类（含自定义），按 sortOrder 升序。分方向分组渲染。
+    @Query(sort: \LedgerCategory.sortOrder) private var categories: [LedgerCategory]
 
     @State private var showingInitSheet = false
+    // 非 nil → 打开分类编辑器 sheet（.create 新增 / .edit 编辑某自定义分类）。
+    @State private var editorRoute: CategoryEditorRoute?
+    // 点预置分类时的轻提示（预置不可改）。
+    @State private var showingPresetLockedAlert = false
     // 非 nil → 打开对应周期的预算设置 sheet。
     @State private var editingBudgetPeriod: BudgetPeriodType?
     @State private var showingKeySheet = false
@@ -138,6 +141,14 @@ struct ProfilePlaceholderView: View {
             // KeySetupSheet 无完成回调，关闭时重读 Keychain 刷新状态行。
             .sheet(isPresented: $showingKeySheet, onDismiss: { keyConfigured = KeychainStore.shared.isConfigured }) {
                 KeySetupSheet()
+            }
+            // 分类编辑器（切片 03）：.create 新增 / .edit 编辑。保存与删除走切片 02 的 Store 方法。
+            .sheet(item: $editorRoute) { route in
+                CategoryEditorSheet(route: route, existing: categories)
+            }
+            // 点预置分类的轻提示：预置锁全部字段，不进编辑器。
+            .alert("预置分类不可修改", isPresented: $showingPresetLockedAlert) {
+                Button("好", role: .cancel) { }
             }
             // 兜底跨路径刷新：若在别处（如 N03 识别拦截流程）配过 Key，切回我的页时同步状态行。
             .onAppear { keyConfigured = KeychainStore.shared.isConfigured }
@@ -265,34 +276,67 @@ struct ProfilePlaceholderView: View {
         }
     }
 
-    // MARK: - 分类（预置，只读）
+    // MARK: - 分类（可管理：预置锁定 + 自定义增删改）
 
     private var categorySection: some View {
         Section {
-            categoryTags(.expense, "支出")
-            categoryTags(.income, "收入")
+            categoryRows(.expense, "支出")
+            categoryRows(.income, "收入")
+            Button {
+                editorRoute = .create
+            } label: {
+                Label("新增自定义分类", systemImage: "plus.circle")
+            }
         } header: {
-            Text("分类（预置）")
+            Text("分类")
         }
     }
 
-    /// 只读标签流：某方向的预置分类名铺成自适应换行的 capsule 标签，无点击、无增删改入口。
-    private func categoryTags(_ direction: TransactionDirection, _ label: String) -> some View {
-        let names = presetCategories.filter { $0.direction == direction }.map(\.name)
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 8, alignment: .leading)],
-                      alignment: .leading, spacing: 8) {
-                ForEach(names, id: \.self) { name in
-                    Text(name)
-                        .font(.subheadline)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.background.secondary, in: Capsule())
+    /// 某方向的分类行组：组内小标题 + 各行（预置「预置 · 锁定」不可点进编辑，自定义「编辑 ›」进编辑器）。
+    @ViewBuilder
+    private func categoryRows(_ direction: TransactionDirection, _ label: String) -> some View {
+        let items = categories.filter { $0.direction == direction }
+        Text(label).font(.caption).foregroundStyle(.secondary)
+        ForEach(items) { category in
+            categoryRow(category)
+        }
+    }
+
+    /// 单个分类行：图标 badge + 名称 + 右侧标记。预置点击 alert 不进编辑器；自定义点击进编辑器。
+    private func categoryRow(_ category: LedgerCategory) -> some View {
+        Button {
+            if category.isPreset {
+                showingPresetLockedAlert = true
+            } else {
+                editorRoute = .edit(category)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                categoryBadge(category)
+                Text(category.name).foregroundStyle(.primary)
+                Spacer()
+                if category.isPreset {
+                    Text("预置 · 锁定").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 2) {
+                        Text("编辑").font(.caption).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                    }
                 }
             }
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+    }
+
+    /// 图标底色 badge：自定义分类用自带 icon/color（emoji + hex 底色）；预置分类 icon/color 为 nil，
+    /// 走 CategoryStyle 兜底口径（与最近记录、账单标签同源），不硬编码。
+    private func categoryBadge(_ category: LedgerCategory) -> some View {
+        let emoji = category.icon ?? CategoryStyle.emoji(for: category)
+        let tint = category.color.flatMap(Color.init(hex:)) ?? CategoryStyle.color(for: category)
+        return Text(emoji)
+            .font(.footnote)
+            .frame(width: 28, height: 28)
+            .background(tint.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
     }
 }
 
@@ -420,6 +464,240 @@ private struct BudgetEditSheet: View {
                 if let current { input = NSDecimalNumber(decimal: current).stringValue }
             }
         }
+    }
+}
+
+// MARK: - 分类编辑器（切片 03）
+
+/// 分类编辑器路由：驱动 `.sheet(item:)`。`.create` 新增（可选方向）/ `.edit` 编辑既有自定义分类（锁方向）。
+private enum CategoryEditorRoute: Identifiable {
+    case create
+    case edit(LedgerCategory)
+
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .edit(let c): return c.id.uuidString
+        }
+    }
+}
+
+/// 分类编辑器可选值（UI 选择项，对齐原型 `data.js`）。非模型数据，仅本片使用。
+private enum CategoryEditorChoices {
+    /// 16 个候选图标（emoji）。
+    static let icons = ["🐾", "🎓", "💊", "🎁", "✈️", "📚", "🏋️", "🎵",
+                        "🍼", "🐶", "💄", "🔧", "🌱", "☕️", "🎨", "🏦"]
+    /// 8 个候选颜色（hex）。
+    static let colors = ["#e8785c", "#f0a868", "#e8a0bf", "#b39ddb",
+                         "#8fb8de", "#7fc8a9", "#6bbf8a", "#c0a080"]
+}
+
+/// 分类编辑器 sheet（仿 `BudgetEditSheet`）：新增可选方向、编辑锁方向；名称限 6 字；图标 16 选一、颜色 8 选一。
+/// 保存走切片 02 Store：新增 `createCategory`（重名判定放本层，因 02 的 createCategory 不判重）、
+/// 编辑 `updateCategory`（内建同方向重名拒绝）。删除仅编辑态：二次确认带引用数与方向化兜底名，
+/// **先 `dismiss()` 再 `deleteCategory` 防 SwiftData 悬垂 SIGTRAP**（对齐 `DeepLinkResultSheet` 范式与 memory 悬垂陷阱）。
+private struct CategoryEditorSheet: View {
+    let route: CategoryEditorRoute
+    /// 全部分类的内存快照：新增判重与 sortOrder 计算用（单用户 App 无并发写，快照充分）。
+    let existing: [LedgerCategory]
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    private var store: LedgerStore { LedgerStore(modelContext) }
+
+    /// 编辑目标（`.edit` 时非 nil，方向锁定不可改）。
+    private let editing: LedgerCategory?
+
+    @State private var direction: TransactionDirection
+    @State private var name: String
+    @State private var icon: String
+    @State private var color: String
+    @State private var showingDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    init(route: CategoryEditorRoute, existing: [LedgerCategory]) {
+        self.route = route
+        self.existing = existing
+        switch route {
+        case .create:
+            editing = nil
+            _direction = State(initialValue: .expense)
+            _name = State(initialValue: "")
+            _icon = State(initialValue: CategoryEditorChoices.icons[0])
+            _color = State(initialValue: CategoryEditorChoices.colors[0])
+        case .edit(let c):
+            editing = c
+            _direction = State(initialValue: c.direction)
+            _name = State(initialValue: c.name)
+            _icon = State(initialValue: c.icon ?? CategoryEditorChoices.icons[0])
+            _color = State(initialValue: c.color ?? CategoryEditorChoices.colors[0])
+        }
+    }
+
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
+    private var canSave: Bool { !trimmedName.isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // 方向：仅新增可选；编辑锁定（不显示，updateCategory 签名不含 direction）。
+                if editing == nil {
+                    Section {
+                        Picker("方向", selection: $direction) {
+                            Text("支出").tag(TransactionDirection.expense)
+                            Text("收入").tag(TransactionDirection.income)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
+                Section {
+                    TextField("分类名称（最多 6 字）", text: $name)
+                        .onChange(of: name) { _, newValue in
+                            if newValue.count > 6 { name = String(newValue.prefix(6)) }
+                        }
+                } header: {
+                    Text("名称")
+                }
+                Section {
+                    iconGrid
+                } header: {
+                    Text("图标")
+                }
+                Section {
+                    colorGrid
+                } header: {
+                    Text("颜色")
+                }
+                if editing != nil {
+                    Section {
+                        Button("删除这个分类", role: .destructive) {
+                            showingDeleteConfirm = true
+                        }
+                    }
+                }
+            }
+            .navigationTitle(editing == nil ? "新增分类" : "编辑分类")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                        .disabled(!canSave)
+                }
+            }
+            .alert("无法保存", isPresented: Binding(get: { errorMessage != nil },
+                                                set: { if !$0 { errorMessage = nil } })) {
+                Button("好", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+            .confirmationDialog(deleteTitle, isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
+                Button("删除", role: .destructive) {
+                    guard let editing else { return }
+                    // 先 dismiss 再 delete：避免 sheet 以已删分类重建 editor（SwiftData 悬垂 SIGTRAP，见 memory）。
+                    let perform = { try? store.deleteCategory(editing) }
+                    dismiss()
+                    perform()
+                }
+                Button("取消", role: .cancel) { }
+            } message: {
+                Text(deleteMessage)
+            }
+        }
+    }
+
+    /// 16 图标网格：选中高亮描边。
+    private var iconGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+            ForEach(CategoryEditorChoices.icons, id: \.self) { emoji in
+                Button {
+                    icon = emoji
+                } label: {
+                    Text(emoji)
+                        .font(.title3)
+                        .frame(width: 36, height: 36)
+                        .background(icon == emoji ? Color.accentColor.opacity(0.22) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .stroke(icon == emoji ? Color.accentColor : .clear, lineWidth: 2))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// 8 颜色网格：选中描边。
+    private var colorGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+            ForEach(CategoryEditorChoices.colors, id: \.self) { hex in
+                Button {
+                    color = hex
+                } label: {
+                    Circle()
+                        .fill(Color(hex: hex) ?? .gray)
+                        .frame(width: 30, height: 30)
+                        .overlay(Circle().stroke(Color.primary, lineWidth: color == hex ? 2 : 0))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var deleteTitle: String {
+        (editing?.transactions.isEmpty ?? true) ? "确定删除这个自定义分类？" : "删除后账单会转移"
+    }
+
+    /// 删除确认文案：有引用则显示引用数 + 方向化兜底名（收入显示「其他收入」，纠原型统一「其他」的措辞）。
+    private var deleteMessage: String {
+        guard let editing else { return "" }
+        let count = editing.transactions.count
+        guard count > 0 else { return "此分类没有账单使用，可安全删除。" }
+        let fallback = (editing.direction == .expense) ? "其他" : "其他收入"
+        return "有 \(count) 笔账单用了这个分类，删除后这些账单会转到「\(fallback)」。"
+    }
+
+    private func save() {
+        let finalName = trimmedName
+        guard !finalName.isEmpty else { return }
+        do {
+            if let editing {
+                try store.updateCategory(editing, name: finalName, icon: icon, color: color)
+            } else {
+                // 新增判重放 UI 层（切片 02 的 createCategory 不判重）：同方向同名拒绝。
+                let duplicate = existing.contains { $0.direction == direction && $0.name == finalName }
+                if duplicate {
+                    errorMessage = "该方向已有同名分类"
+                    return
+                }
+                // sortOrder 取现有最大值 +1：让自定义分类排在末尾（预置占 0..7），不重排预置。
+                let nextOrder = (existing.map(\.sortOrder).max() ?? 0) + 1
+                try store.createCategory(name: finalName, direction: direction,
+                                         icon: icon, color: color, isPreset: false, sortOrder: nextOrder)
+            }
+            dismiss()
+        } catch CategoryError.duplicateName {
+            errorMessage = "该方向已有同名分类"
+        } catch {
+            errorMessage = "保存失败，请重试"
+        }
+    }
+}
+
+/// 十六进制色解析（本片自定义分类色块用）。项目此前无此工具，故本片内建。
+private extension Color {
+    /// 解析 `#RRGGBB` / `RRGGBB`；非法串返回 nil，由调用方兜底（走 CategoryStyle 方向色）。
+    init?(hex: String) {
+        var s = hex.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        let r = Double((v >> 16) & 0xFF) / 255
+        let g = Double((v >> 8) & 0xFF) / 255
+        let b = Double(v & 0xFF) / 255
+        self = Color(red: r, green: g, blue: b)
     }
 }
 
